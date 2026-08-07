@@ -11,9 +11,6 @@ lateTP <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Ce
 lateTPcont <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ERphagy18hr20hr22hr26hr_112425.txt"))
 lateTPcont2 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ERphagy18hr20hr24hr_Thaps_UBA5inh_121825.csv"))
 lateTPcont3 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ERphagy18hr20hr24hr_Thaps_UBA5inh_read2_121825.csv"))
-earlyTP
-lateTP
-lateTPcont3
 
 # Rename by condition
 # Replace Well column in place
