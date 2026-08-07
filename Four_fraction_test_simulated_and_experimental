@@ -421,10 +421,3 @@ plot2D(res_sim10spinreps[[3]], fcol = "bandle.allocation.pred") +
   title(main = "sim10spin rep 3")  +
   addLegend(object = res_sim10spinreps[[3]], fcol = "bandle.allocation.pred")
 dev.off()
-
-
-plot2D(res_fourspinreps[[3]], fcol = "bandle.allocation.pred") +
-  title(main = "4spin rep 3")  +
-  addLegend(object = res_fourspinreps[[3]], fcol = "bandle.allocation.pred")
-dev.off()
-```
