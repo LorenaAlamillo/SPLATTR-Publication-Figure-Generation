@@ -1,0 +1,165 @@
+
+library(readr)
+library(dplyr)
+library(ggbeeswarm)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+
+# Download data
+lateTP <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ERphagy16hr24hr_102525.txt"))
+lateTPcont <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ERphagy18hr20hr22hr26hr_112425.txt"))
+lateTPcont2 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ERphagy18hr20hr24hr_Thaps_UBA5inh_121825.csv"))
+lateTPcont3 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ERphagy18hr20hr24hr_Thaps_UBA5inh_read2_121825.csv"))
+
+# Rename by condition
+# Replace Well column in place
+earlyTP$Well <- sub("^[A-H]([0-4]+)$", "\\1", earlyTP$Well)
+lateTP$Well  <- sub("^[A-H]([0-4]+)$", "\\1", lateTP$Well)
+lateTPcont$Well  <- sub("^[A-H]([0-4]+)$", "\\1", lateTPcont$Well)
+lateTPcont2$Well  <- sub("^[A-H]([0-9]+)$", "\\1", lateTPcont2$Well)
+lateTPcont3$Well  <- sub("^[A-H]([0-9]+)$", "\\1", lateTPcont3$Well)
+
+#Well_maps
+well_map_late <- c(
+  "3"  = "DMSO24hr",
+  "4"  = "Thaps24hr"
+)
+
+well_map_latecont <- c(
+  "1"  = "DMSO18hr",
+  "2"  = "Thaps18hr",
+  "3"  = "DMSO20hr",
+  "4"  = "Thaps20hr"
+)
+
+#Well_maps
+well_map_latecont2 <- c(
+  "1"  = "10UBA5inh18hr",
+  "2"  = "50UBA5inh18hr",
+  "3"  = "Thaps18hr",
+  "4"  = "DMSO18hr",
+  "5"  = "10UBA5inh20hr",
+  "6"  = "50UBA5inh20hr",
+  "7"  = "Thaps20hr",
+  "8"  = "DMSO20hr",
+  "9"  = "10UBA5inh24hr",
+  "10"  = "50UBA5inh24hr",
+  "11"  = "Thaps24hr",
+  "12"  = "DMSO24hr"
+)
+
+# Apply to dataframes
+lateTP$Well  <- well_map_late[lateTP$Well]
+lateTPcont$Well  <- well_map_latecont[lateTPcont$Well]
+lateTPcont2$Well  <- well_map_latecont2[lateTPcont2$Well]
+lateTPcont3$Well  <- well_map_latecont2[lateTPcont3$Well]
+
+# Bind
+# List of all data frames
+dfs <- list(lateTP, lateTPcont, lateTPcont2, lateTPcont3)
+# Find columns common to all
+common_cols <- Reduce(intersect, lapply(dfs, colnames))
+# Bind only the common columns
+allTP <- do.call(rbind, lapply(dfs, function(df) df[, common_cols, drop = FALSE]))
+#remove 0s in correlation coefficient and remove negative numbers
+allTP <- allTP[allTP$ROI_A_CorrelationCoef != 0, ]
+allTP <- allTP[allTP$ROI_A_CorrelationCoef > 0, ]
+allTP <- allTP %>%
+  filter(!is.na(Well))
+
+# Sort by nucleus size and keep those closest to nucleus median size
+allTP_sub <- allTP %>%
+  group_by(Well) %>%
+  mutate(med = median(ObjectAreaCh1, na.rm = TRUE)) %>%         # compute median per Well
+  mutate(dist_to_med = abs(ObjectAreaCh1 - med)) %>%            # distance from median
+  slice_min(order_by = dist_to_med, n = 90, with_ties = FALSE) %>% # take closest
+  ungroup()
+
+# Plot
+# Split Well into Construct, Treatment, Time if not already
+allTP_plot <- allTP_sub %>%
+  separate(Well, into = c("Treatment", "Time"), sep = "(?<=50UBA5inh|10UBA5inh|DMSO|Thaps)") %>%
+    mutate(
+    Time = factor(Time, levels = c("18hr", "20hr", "24hr")),
+    Treatment = factor(
+      Treatment,
+      levels = c("DMSO", "Thaps", "10UBA5inh", "50UBA5inh")))
+
+# Compute Wilcoxon test per Construct x Time
+wilcox_results <- compare_means(
+  ROI_A_CorrelationCoef ~ Treatment,
+  group.by = "Time",
+  data = allTP_plot,
+  method = "wilcox.test",
+  ref.group = "DMSO"
+)
+
+#Add brackets for each comparison
+treat_levels <- levels(allTP_plot$Treatment)
+
+treat_offsets <- tibble(
+  Treatment = treat_levels,
+  offset = seq(
+    from = -0.3,
+    to   =  0.3,
+    length.out = length(treat_levels)
+  )
+)
+
+wilcox_results <- wilcox_results %>%
+  left_join(treat_offsets, by = c("group1" = "Treatment")) %>%
+  rename(offset1 = offset) %>%
+  left_join(treat_offsets, by = c("group2" = "Treatment")) %>%
+  rename(offset2 = offset) %>%
+  mutate(
+    Time_num = as.numeric(Time),
+    xmin = Time_num + offset1,
+    xmax = Time_num + offset2
+  )
+
+# Seperate brackets along y
+y_base <- max(allTP_plot$ROI_A_CorrelationCoef, na.rm = TRUE)
+
+wilcox_results <- wilcox_results %>%
+  mutate(
+    group2 = factor(group2, levels = levels(allTP_plot$Treatment))
+  ) %>%
+  group_by(Time) %>%
+  arrange(group2) %>%
+  mutate(
+    y.position = y_base * (1.05 + 0.05 * row_number())
+  ) %>%
+  ungroup()
+
+# Calculate median values per Construct × Treatment × Time
+medians <- allTP_plot %>%
+  group_by(Treatment, Time) %>%
+  summarise(med_val = median(ROI_A_CorrelationCoef, na.rm = TRUE), .groups = "drop")
+
+# Plot with Wilcoxon results
+p <- ggplot(allTP_plot, aes(x = Time, y = ROI_A_CorrelationCoef, color = Treatment)) +
+  geom_beeswarm(alpha = 1, dodge.width = 0.8, size = 0.4, cex = 0.5) +
+  geom_line(data = medians, aes(x = Time, y = med_val, group = Treatment, color = Treatment), size = 0.7, alpha = 0.8)  +
+  stat_pvalue_manual(
+    wilcox_results,
+    label = "p.signif",
+    xmin = "xmin",
+    xmax = "xmax",
+    y.position = "y.position",
+    tip.length = 0.01
+  ) +
+  coord_cartesian(ylim = c(0,1.2)) +
+  #scale_x_discrete(expand = expansion(mult = c(0.2, 0.2))) +
+  scale_color_manual(values = c("DMSO" = "black", "Thaps" = "red3", "50UBA5inh" = "blue3", "10UBA5inh" = "cornflowerblue")) +
+  theme_bw() +
+  labs(title = "Correlation Coefficient over Treatment Time",
+       x = "Timepoint",
+       y = "RFP GFP correlation coefficient")
+
+# Save as PDF
+ggsave("../Figs/ERphagy_UBA5inh_correlation_coefficient_pooled.pdf", plot = p, width = 12, height = 6)
+
+
+
+
