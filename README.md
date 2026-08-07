@@ -1,2 +1,7 @@
 # SPLATTR-Publication-Figure-Generation
 The code here is down stream of data processing steps and exclusively includes code used to generate figures.
+
+Briefly, AC16 cells were labeled with heavy isotopes for four timepoints with three replicates each for control and thapsigargin treated samples. These samples were processed to extract spatial information using ultracentrifugation for increasing speeds resulting in four fractions. Two time points for a control and treated condition were multi-plexed together, off-line fractionated, and examined on a QE-HF. TMT-intensities and heavy/light peptide intensities were extracted from the data. TMT protein intensities of each fraction were used to predict protein localization using BANDLE. Heavy/light peptide signals were converted to heavy/light peptide intensities per sample using the ratio contribution of each sample to the total TMT-intensities for each peptide. The protein intensities were analyzed using limma to calculate significant increases/decreases in the light and heavy proteins at each time point. 
+
+The experiment was analyzed to assess protein localization at each time point, differential localization between conditions at each time point, and differences in proteome synthesis and clearance within organelles at each time point. Observations were validated using additional proteomic experiments, imaging experiments, and cell viability assays. 
+
