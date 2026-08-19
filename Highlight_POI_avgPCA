@@ -289,7 +289,6 @@ plot.window(xlim = c(0, 1), ylim = c(0, 1)) # Define a dummy plotting window
 addLegend(object = res_ctrl, fcol = "bandle.allocation.pred.pred")
 
 
-library(UniProt.ws)
 # Open PDF device
 pdf(file.path("../figs", "35_Highlight_POI_4hr.pdf"), width = 11, height = 8)
 
