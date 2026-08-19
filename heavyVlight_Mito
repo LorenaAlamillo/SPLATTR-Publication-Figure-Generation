@@ -1,0 +1,112 @@
+# Here we use the mitochondrial localizations at 24hr control for all volcanos
+
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpointdensity)
+library(wesanderson)
+library(ggrepel)
+library(ggthemes)
+
+#download data
+light <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "51c_limma_Light.tsv"))
+heavy <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "51b_limma_Heavy.tsv"))
+allocations <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "50_24hrR1_Ctrl_localization.txt"))
+
+# Extract Mito/Chrom proteins 
+# Get Mito/Chrom proteins in list
+Mito_proteins <- allocations %>% filter(bandle.allocation.pred.pred == "Mito/Chrom")
+Mito_list <- Mito_proteins$rowname
+
+# Get Mito light and heavy 
+Mito_light <- light[light$Entry %in% Mito_list, ]
+heavy$Entry <- paste0(heavy$Entry, "_H") #add _H to heavy proteins so they match to allocations
+Mito_heavy <- heavy[heavy$Entry %in% Mito_list, ]
+
+# Proteins to label
+highlight_death <- c("HSPA9", "HSPD1", "AIFM1", "LONP1", "DIABLO", "TOMM70", "BCL2L13", "BAK1")
+highlight_energy <- c("ATP5MG", "ATP5IF1", "UQCRC1", "MT-CO2", "NDUFV1",
+                      "COX4I41", "ATP5F1D", "SLC25A3", "ATP5F1B", "UQCR2", "UQCR1")
+
+highlight_proteins <- c(highlight_death, highlight_energy)
+
+# Label light
+# Get unique timepoints
+timepoints <- unique(Mito_light$condition)
+
+# Loop through each timepoint
+for (tp in timepoints) {
+  df_tp <- Mito_light[Mito_light$condition == tp, ]
+  
+  # Add a color column for the highlighted proteins
+  df_tp$label_color <- NA
+  df_tp$label_color[df_tp$GN %in% highlight_death] <- "firebrick"
+  df_tp$label_color[df_tp$GN %in% highlight_energy] <- "forestgreen"
+  
+  g <- ggplot(data = df_tp, aes(x = logFC, y = -log10(P.Value))) +
+    geom_point(color = "#FFDB58", alpha = 0.6) +
+    ggthemes::theme_few() +
+    theme(aspect.ratio = 1) +
+    geom_text_repel(
+      data = subset(df_tp, GN %in% highlight_proteins),
+     aes(label = GN, color = I(label_color)),  # use I() to use actual colors
+     size = 2, 
+     force = 0.15, 
+     point.padding = 0, 
+     box.padding = 0
+      ) +
+    coord_cartesian(xlim = c(-2.4, 2.4), ylim = c(0, 7)) +
+    geom_vline(xintercept = 0) +
+    ggtitle(paste(tp)) +
+    xlab("Log2 Fold Change") +
+    stat_function(
+      fun = function(x) (-log10(0.05) + (log(1.2) / x)^2), 
+      lty = 2, 
+      n = 1500, 
+      xlim = c(-11, 11), 
+      linewidth = 0.2, 
+      alpha = 1)
+  
+  ggsave(
+    plot = g,
+    filename = paste0("../figs/37v3_light_Mito_", tp, "_volcano.pdf"),
+    width = 5, height = 5, useDingbats = FALSE)}
+
+# Label heavy
+# Get unique timepoints
+timepoints <- unique(Mito_heavy$condition)
+
+# Loop through each timepoint
+for (tp in timepoints) {
+  df_tp <- Mito_heavy[Mito_heavy$condition == tp, ]
+  
+    # Add a color column for the highlighted proteins
+  df_tp$label_color <- NA
+  df_tp$label_color[df_tp$GN %in% highlight_death] <- "firebrick"
+  df_tp$label_color[df_tp$GN %in% highlight_energy] <- "forestgreen"
+  
+  g <- ggplot(data = df_tp, aes(x = logFC, y = -log10(P.Value))) +
+    geom_point(color = "#FFDB58", alpha = 0.6) +
+    ggthemes::theme_few() +
+    theme(aspect.ratio = 1) +
+    geom_text_repel(
+      data = subset(df_tp, GN %in% highlight_proteins),
+     aes(label = GN, color = I(label_color)),  # use I() to use actual colors
+     size = 2, 
+     force = 0.15, 
+     point.padding = 0, 
+     box.padding = 0
+      ) +
+    coord_cartesian(xlim = c(-2.4, 2.4), ylim = c(0, 7)) +
+    geom_vline(xintercept = 0) +
+    ggtitle(paste(tp)) +
+    xlab("Log2 Fold Change") +
+    stat_function(fun = function(x) (-log10(0.05) + (log(1.2) / x)^2), 
+                  lty = 2, n = 1500, xlim = c(-11, 11), linewidth = 0.2, alpha = 1)
+  
+  ggsave(plot = g,
+         filename = paste0("../figs/37v3_heavy_Mito_", tp, "_volcano.pdf"),
+         width = 5, height = 5, useDingbats = FALSE)
+}
+
