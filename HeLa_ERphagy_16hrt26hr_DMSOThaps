@@ -1,0 +1,90 @@
+
+library(readr)
+library(dplyr)
+library(ggbeeswarm)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+
+TP <- read_tsv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "HeLa ERphagy 16hrto26hr ThapsDMSO 041726 REDO.txt"))
+
+# Rename by condition
+# Replace Well column in place
+TP$Well <- sub("^[A-H]([0-9]+)$", "\\1", TP$Well)
+
+#Well_maps
+well_map_TP <- c(
+  "1"  = "DMSO26hr",
+  "2"  = "Thaps26hr",
+  "3"  = "DMSO24hr",
+  "4"  = "Thaps24hr",
+  "5"  = "DMSO22hr",
+  "6"  = "Thaps22hr",
+  "7"  = "DMSO20hr",
+  "8"  = "Thaps20hr",
+  "9" = "DMSO18hr",
+  "10" = "Thaps18hr",
+  "11" = "DMSO16hr",
+  "12" = "Thaps16hr")
+
+# Apply to your dataframes
+TP$Well <- well_map_TP[TP$Well]
+# Bind
+allTP <- TP
+
+# Remove 0s in correlation coefficient and remove negative numbers
+allTP <- allTP[allTP$ROI_A_CorrelationCoef != 0, ]
+allTP <- allTP[allTP$ROI_A_CorrelationCoef > 0, ]
+allTP <- allTP %>%
+  filter(!is.na(Well))
+
+# Sort by nucleus size and keep those closest to nucleus median size
+allTP_sub <- allTP %>%
+  group_by(Well) %>%
+  mutate(med = median(ObjectAreaCh1, na.rm = TRUE)) %>%         # compute median per Well
+  mutate(dist_to_med = abs(ObjectAreaCh1 - med)) %>%            # distance from median
+  slice_min(order_by = dist_to_med, n = 90, with_ties = FALSE) %>% # take closest
+  ungroup()
+
+# Plot
+# Split Well into Construct, Treatment, Time if not already
+allTP_plot <- allTP_sub %>%
+  separate(Well, into = c("Treatment", "Time"), sep = "(?<=DMSO|Thaps)") %>%
+  mutate(Time = factor(Time, levels = c( "16hr", "18hr", "20hr", "22hr", "24hr", "26hr")))
+
+# Compute Wilcoxon test per Construct x Time
+wilcox_results <- compare_means(
+  ROI_A_CorrelationCoef ~ Treatment,   # numeric outcome ~ group column
+  group.by = c("Time"),
+  data = allTP_plot,
+  method = "wilcox.test")
+
+# Add xmin/xmax for each comparison
+wilcox_results <- wilcox_results %>%
+  mutate(Time_num = as.numeric(Time),
+         xmin = Time_num - 0.1,
+         xmax = Time_num + 0.1)
+
+# Calculate median values per Construct × Treatment × Time
+medians <- allTP_plot %>%
+  group_by(Treatment, Time) %>%
+  summarise(med_val = median(ROI_A_CorrelationCoef, na.rm = TRUE), .groups = "drop")
+
+# Plot with Wilcoxon results
+p <- ggplot(allTP_plot, aes(x = Time, y = ROI_A_CorrelationCoef, color = Treatment)) +
+  geom_beeswarm(alpha = 1, dodge.width = 0.8, size = 0.4, cex = 0.5) +
+  geom_line(data = medians, aes(x = Time, y = med_val, group = Treatment, color = Treatment), size = 0.7, alpha = 0.8)  +
+  stat_pvalue_manual(wilcox_results, 
+                     label = "p.signif",
+                     y.position = max(allTP_plot$ROI_A_CorrelationCoef) * 1.05) +
+  coord_cartesian(ylim = c(0,1.2)) +
+  #scale_x_discrete(expand = expansion(mult = c(0.2, 0.2))) +
+  scale_color_manual(values = c("DMSO" = "black", "Thaps" = "red3")) +
+  theme_bw() +
+  labs(title = "Correlation Coefficient over Treatment Time",
+       x = "Timepoint",
+       y = "RFP GFP correlation coefficient")
+
+# Save as PDF
+ggsave("../Figs/16_HELa_ERphagy_correlation_coefficient.pdf", plot = p, width = 12, height = 6)
+
