@@ -1,0 +1,502 @@
+
+library(tidyverse)
+library(MSnbase)
+library(pRoloc)
+library(bandle)
+
+# Download data
+Rep1_1hr16hr <- readr::read_tsv(file.path("../20240424_LA4SPLAT_AC16CtrlThps1hr16hrRep1/processed", "01_cleaned_colsumnorm_Comet.txt"))
+Rep2_1hr16hr <- readr::read_tsv(file.path("../20240814_LA4SPLAT_AC16CtrlThps1hr16hrRep2/processed", "01_cleaned_colsumnorm.txt"))
+Rep3_1hr16hr <- readr::read_tsv(file.path("../20241029_LA4SPLAT_AC16CtrlThps1hr16hrR3_redo/processed", "01_cleaned_colsumnorm.txt"))
+Rep1_4hr24hr <- readr::read_tsv(file.path("../20240802_LA4SPLAT_AC16CtrlThps4hr24hrRep1/processed", "01_cleaned_colsumnorm.txt"))
+Rep2_4hr24hr <- readr::read_tsv(file.path("../20241011_LA4SPLAT_AC16CtrlThps4hr24hrRep2_redo/processed", "01_cleaned_colsumnorm.txt"))
+Rep3_4hr24hr <- readr::read_tsv(file.path("../20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "01_cleaned_colsumnorm.txt"))
+markers <- readRDS(file.path("../20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "25_Organelle_Markers_MitoChrom.Rds"))
+
+#Merge all
+combination <- full_join(Rep1_1hr16hr, Rep2_1hr16hr, by = "rowname")
+combination <- full_join(combination, Rep3_1hr16hr, by = "rowname")
+combination <- full_join(combination, Rep1_4hr24hr, by = "rowname")
+combination <- full_join(combination, Rep2_4hr24hr, by = "rowname")
+combination <- full_join(combination, Rep3_4hr24hr, by = "rowname")
+
+# Average signal for each fraction between reps
+averages_by_time_fraction <- function(df, id_col = "rowname") {
+  # Store and remove the ID column
+  ids <- df[[id_col]]
+  df_numeric <- df[, !(names(df) == id_col)]
+  df_numeric[df_numeric < 1e-15] <- NA #filter out small values
+
+# Separate column names into C and T conditions
+  c_cols <- grep("^C", names(df_numeric), value = TRUE)
+  t_cols <- grep("^T", names(df_numeric), value = TRUE)
+  
+  # Helper to group and average by suffix
+  average_condition <- function(cols) {
+    suffixes <- sub("^[^_]*", "", cols)
+    groups <- split(cols, suffixes)
+    averaged <- sapply(groups, function(g) {
+    vals <- df_numeric[, g, drop = FALSE]
+    avg <- rowMeans(vals, na.rm = TRUE)
+    avg[rowSums(!is.na(vals)) < 3] <- NA
+    avg
+  })
+    return(as.data.frame(averaged))
+  }
+  
+  c_avg <- average_condition(c_cols)
+  t_avg <- average_condition(t_cols)
+  
+  # Rename columns to indicate condition
+  colnames(c_avg) <- paste0("C", colnames(c_avg))
+  colnames(t_avg) <- paste0("T", colnames(t_avg))
+  
+  # Combine with ID column
+  result <- cbind(df[id_col], c_avg, t_avg)
+  return(result)
+}
+averages <- averages_by_time_fraction(combination)
+
+
+# Pull each condition into its own dataframe 
+split_averaged_by_condition <- function(df, id_col = "rowname") {
+  # Extract column names (excluding the ID column)
+  data_cols <- setdiff(names(df), id_col)
+
+  # Extract condition names from colnames without fraction
+  condition_keys <- sub("^[^_]*_([^_]*).*", "\\1", data_cols)
+
+  # Group columns by the condition
+  condition_groups <- split(data_cols, condition_keys)
+  
+  # For each condition, make a new data frame with the ID column and the matching C/T columns
+  result_list <- lapply(condition_groups, function(cols) {
+    df_subset <- df[, c(id_col, cols), drop = FALSE]
+    return(df_subset)
+  })
+  
+  return(result_list)
+}
+averages_list <- split_averaged_by_condition(averages)
+
+# Remove empty rows
+remove_nan_rows <- function(df_list) {
+  lapply(df_list, function(df) df[complete.cases(df),])
+}
+cleaned_averages <- remove_nan_rows(averages_list)
+
+# Get bandles
+bandleres <- list(
+  hr1 = readRDS(file=file.path("../20241029_LA4SPLAT_AC16CtrlThps1hr16hrR3_redo/processed", "22_TrainBandle_1hrR1toR3_MitoChrom.Rds")),
+  hr4 = readRDS(file=file.path("../20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "44_TrainBandle_4hr_R1toR3_MitoChrom.Rds")),
+  hr16 = readRDS(file=file.path("../20241029_LA4SPLAT_AC16CtrlThps1hr16hrR3_redo/processed", "23_TrainBandle_16hr_R1toR3_MitoChrom.Rds")),
+  hr24 = readRDS(file=file.path("../20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "45_TrainBandle_24hr_R1toR3_MitoChrom.Rds")))
+
+bandleres <- lapply(bandleres, function(df) {
+  df <- bandleProcess(df)})
+
+# make msns
+Create_MSn <- function(df, sample, add_markers =NULL) {
+  cols <- colnames(df)[str_detect(colnames(df), paste0("rowname|", sample))]
+  if(!is.null(add_markers)){
+  print("Adding Markers")
+  x <- readMSnSet2(file = df %>% dplyr::select(all_of(cols)),
+                       ecol = c(2:length(cols)),
+                       fnames = "rowname") %>% 
+  MSnbase::normalize(method="sum") |> 
+  MSnbase::filterNA() |>
+  pRoloc::addMarkers(add_markers, verbose=F)
+  } else {
+    print("Using no Markers")
+    x <- readMSnSet2(file = df %>% dplyr::select(all_of(cols)),
+                       ecol = c(2:length(cols)),
+                       fnames = "rowname") %>% 
+  MSnbase::normalize(method="sum") |> 
+  MSnbase::filterNA()
+  }
+  return(x)
+}
+
+# This will store one comp_list per dataset
+all_comp_lists <- list()
+
+conditions <- c("C", "T")
+
+# Loop over each dataset in cleaned_averages
+for (df_name in names(cleaned_averages)) {
+  markers_df <- cleaned_averages[[df_name]]
+  
+  msn_list <- list()  # To collect MSnSets for this dataset
+  
+  for (i in conditions) {
+    cols <- colnames(markers_df)[str_detect(colnames(markers_df), i)]
+    df <- markers_df %>% dplyr::select(rowname, all_of(cols)) %>% na.omit()
+    samples <- unique(gsub("hr_.*", "hr", cols))
+    
+    for (j in samples) {
+      cols2 <- colnames(df)[str_detect(colnames(df), j)]
+      msn <- Create_MSn(df %>% dplyr::select(rowname, all_of(cols2)), 
+                        sample = j, add_markers = markers)
+      
+      # Store with name like "C1_1hr" or "T1_4hr"
+      msn_list[[j]] <- msn
+    }
+  }
+  
+  # Combine MSnSets with common features
+  comp_list <- MSnbase::commonFeatureNames(msn_list)
+  
+  # Store in overall list with dataset name
+  all_comp_lists[[df_name]] <- comp_list
+}
+
+# Bandle
+# Map of timepoint names
+tp_map <- c("1hr" = "hr1", "4hr" = "hr4", "16hr" = "hr16", "24hr" = "hr24")
+bandle_results <- list()
+
+apply_predictions <- function(obj) {
+  obj <- getPredictions(obj, fcol = "bandle.allocation", scol = "bandle.probability", mcol = "markers", t = 0.95)
+  fData(obj)$bandle.outlier.t <- 1 - fData(obj)$bandle.outlier
+  obj <- getPredictions(obj, fcol = "bandle.allocation.pred", scol = "bandle.outlier.t", mcol = "markers", t = 0.95)
+  obj <- getPredictions(obj, fcol = "bandle.allocation.pred.pred", scol = "bandle.outlier.t", mcol = "markers", t = 0.95)
+  return(obj)
+}
+
+for (tp in names(all_comp_lists)) {
+  cat("\nProcessing timepoint:", tp, "\n")
+  
+  mapped_tp <- tp_map[[tp]]
+  comp_list <- all_comp_lists[[tp]]
+  
+  control_full <- comp_list[[1]]
+  thaps_full <- comp_list[[2]]
+  
+  #find features in training data
+  trained_feats <- rownames(bandleres[[mapped_tp]]@summary@summaries[[1]]@posteriorEstimates)
+  
+  #find marker rows in each dataset
+  marker_rows_ctrl <- rownames(control_full)[!rownames(control_full) %in% trained_feats & !is.na(fData(control_full)$markers)]
+  marker_rows_thps <- rownames(thaps_full)[!rownames(thaps_full) %in% trained_feats & !is.na(fData(thaps_full)$markers)]
+
+  #filter datasets to include markers and proteins in both control and thapsigargin
+  final_feats_ctrl <- intersect(rownames(control_full), unique(c(trained_feats, marker_rows_ctrl)))
+  final_feats_thps <- intersect(rownames(thaps_full), unique(c(trained_feats, marker_rows_thps)))
+  final_feats <- intersect(final_feats_ctrl, final_feats_thps)
+  
+  # Reorder so training features come first in the correct order
+  final_feats_ordered <- c(
+    trained_feats[trained_feats %in% final_feats],
+    setdiff(final_feats, trained_feats)
+  )
+  
+  # assign control and thapsigargin
+  control_trained <- list(control_full[final_feats_ordered, ])
+  thapsigargin_trained <- list(thaps_full[final_feats_ordered, ])
+  
+  # Check for mismatches BEFORE calling bandlePredict
+  if (!identical(rownames(control_trained[[1]]), rownames(thapsigargin_trained[[1]]))) {
+    ctrl_only <- setdiff(rownames(control_trained[[1]]), rownames(thapsigargin_trained[[1]]))
+    thps_only <- setdiff(rownames(thapsigargin_trained[[1]]), rownames(control_trained[[1]]))
+    
+    warning(paste0("❌ Feature name mismatch at ", tp, ":\n",
+                   "- Present in control only: ", paste(ctrl_only, collapse = ", "), "\n",
+                   "- Present in thapsigargin only: ", paste(thps_only, collapse = ", ")))
+    next
+  }
+  
+  # Attempt prediction, capture any error
+  xx <- tryCatch({
+    bandlePredict(control_trained, thapsigargin_trained, 
+                  params = bandleres[[mapped_tp]], fcol = "markers")
+  }, error = function(e) {
+    message("❌ Error during bandlePredict() at timepoint ", tp, ":\n", e$message)
+    return(NULL)
+  })
+  
+  # Skip if bandlePredict failed
+  if (is.null(xx)) next
+
+  res_ctrl <- xx[[1]]
+  res_thps <- xx[[2]]
+
+  res_ctrl[[1]] <- apply_predictions(res_ctrl[[1]])
+  res_thps[[1]] <- apply_predictions(res_thps[[1]])
+
+  # Merge predictions back into full MSnSet
+  fData(control_full)[rownames(res_ctrl[[1]]), colnames(fData(res_ctrl[[1]]))] <- fData(res_ctrl[[1]])
+  fData(thaps_full)[rownames(res_thps[[1]]), colnames(fData(res_thps[[1]]))] <- fData(res_thps[[1]])
+
+  # Store results
+  bandle_results[[tp]] <- list(
+    control_full = control_full,
+    thps_full = thaps_full)}
+
+# Plots
+#visualize pca plots
+## Let's set the stock colours of the classes to plot to be transparent
+setStockcol(NULL)
+setStockcol(paste0(getStockcol(), "90")) 
+
+for (tp in names(bandle_results)) {
+  cat("Plotting timepoint:", tp, "\n")
+
+  res_ctrl <- bandle_results[[tp]]$control_full
+  res_thps <- bandle_results[[tp]]$thps_full
+
+  stopifnot("bandle.allocation.pred.pred" %in% fvarLabels(res_ctrl))
+  stopifnot("bandle.allocation.pred.pred" %in% fvarLabels(res_thps))
+
+  # Initialize mirroring flags
+  mirror_ctrl_x <- FALSE
+  mirror_ctrl_y <- FALSE
+  mirror_thps_x <- FALSE
+  mirror_thps_y <- FALSE
+
+  # Apply rules
+  if (tp == "16hr") {
+    mirror_ctrl_x <- TRUE  # Only control gets mirrorX
+  }
+
+  if (tp == "4hr") {
+    mirror_ctrl_y <- TRUE
+    mirror_thps_y <- TRUE
+  }
+
+  if (tp %in% c("1hr", "16hr")) {
+    mirror_thps_y <- TRUE
+    mirror_thps_x <- TRUE
+  }
+  if (tp == "1hr") {
+    mirror_ctrl_y <- TRUE
+    mirror_ctrl_x <- TRUE
+  }
+
+  # Plot control
+  plot2D(res_ctrl, fcol = "bandle.allocation.pred.pred",
+         mirrorX = mirror_ctrl_x, mirrorY = mirror_ctrl_y) +
+    title(main = paste("Control -", tp))
+
+  # Plot thapsigargin
+  plot2D(res_thps, fcol = "bandle.allocation.pred.pred",
+         mirrorX = mirror_thps_x, mirrorY = mirror_thps_y) +
+    title(main = paste("Thapsigargin -", tp))
+}
+
+# Open a blank plotting area
+plot.new()
+plot.window(xlim = c(0, 1), ylim = c(0, 1)) # Define a dummy plotting window
+addLegend(object = res_ctrl, fcol = "bandle.allocation.pred.pred")
+
+
+library(UniProt.ws)
+# Open PDF device
+pdf(file.path("../figs", "35_Highlight_POI_4hr.pdf"), width = 11, height = 8)
+
+# Layout: Control & Thapsigargin side-by-side
+par(mfrow = c(1, 1))
+
+# Transparent class colors
+setStockcol(NULL)
+setStockcol(paste0(getStockcol(), "90")) 
+
+ctrl <- bandle_results[["4hr"]]$control_full
+thps <- bandle_results[["4hr"]]$thps_full
+
+# Movers
+movers <- c("P61421", "Q9H4M9", "Q9NZN4", "Q9H223", "O00161", "P52298", "Q9BUJ2", "O43310", "Q8WWY3", "P57772_H", "P62306")
+names <- c("ATP6V0D1", "EHD1", "EHD2", "EHD4", "SNAP23", "NCBP2", "HNRNPUL1", "CTIF", "PRPF31", "EEFSEC_H", "SNRPF")
+
+## --- Control plot ---
+plot2D(ctrl, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE)
+highlightOnPlot(ctrl, featureNames(ctrl)[featureNames(ctrl) %in% movers],
+                pch = 21, bg = "black", cex = 1.5, args = list(mirrorY = TRUE))
+
+# Label movers
+coords_ctrl <- plot2D(ctrl, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE, plot = FALSE)
+coords_ctrl <- coords_ctrl[featureNames(ctrl) %in% movers, ]
+text(coords_ctrl[, 1], coords_ctrl[, 2],
+     labels = names[match(featureNames(ctrl)[featureNames(ctrl) %in% movers], movers)],
+     pos = 3, cex = 0.7, col = "black")
+
+title(main = "Control (4hr) – Movers highlighted", adj = 0, cex.main = 0.8)
+
+## --- Thapsigargin plot ---
+plot2D(thps, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE)
+highlightOnPlot(thps, featureNames(thps)[featureNames(thps) %in% movers],
+                pch = 21, bg = "black", cex = 1.5, args = list(mirrorY = TRUE))
+
+# Label movers
+coords_thps <- plot2D(thps, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE, plot = FALSE)
+coords_thps <- coords_thps[featureNames(thps) %in% movers, ]
+text(coords_thps[, 1], coords_thps[, 2],
+     labels = names[match(featureNames(thps)[featureNames(thps) %in% movers], movers)],
+     pos = 3, cex = 0.7, col = "black")
+
+title(main = "Thapsigargin (4hr) – Movers highlighted", adj = 0, cex.main = 0.8)
+
+# Legend
+plot.new()
+plot.window(xlim = c(0, 1), ylim = c(0, 1))
+addLegend(object = ctrl, fcol = "bandle.allocation.pred.pred")
+
+dev.off()
+
+# Open PDF device
+pdf(file.path("../figs", "35_Highlight_POI_16hr.pdf"), width = 11, height = 8)
+
+# Layout: Control & Thapsigargin side-by-side
+par(mfrow = c(1, 1))
+
+# Transparent class colors
+setStockcol(NULL)
+setStockcol(paste0(getStockcol(), "90")) 
+
+ctrl <- bandle_results[["16hr"]]$control_full
+thps <- bandle_results[["16hr"]]$thps_full
+
+# Movers
+movers <- c("P61160", "P61158", "O15143", "O15144", "O15145", "P59998", "O15511")
+names <- c("ACTR2", "ACTR3", "ARPC1B", "ARPC2", "ARPC3", "ARPC4", "ARPC5")
+
+## --- Control plot ---
+plot2D(ctrl, fcol = "bandle.allocation.pred.pred", mirrorX = TRUE)
+highlightOnPlot(ctrl, featureNames(ctrl)[featureNames(ctrl) %in% movers],
+                pch = 21, bg = "black", cex = 1.5, args = list(mirrorX = TRUE))
+
+# Label movers
+coords_ctrl <- plot2D(ctrl, fcol = "bandle.allocation.pred.pred", mirrorX = TRUE, plot = FALSE)
+coords_ctrl <- coords_ctrl[featureNames(ctrl) %in% movers, ]
+text(coords_ctrl[, 1], coords_ctrl[, 2],
+     labels = names[match(featureNames(ctrl)[featureNames(ctrl) %in% movers], movers)],
+     pos = 3, cex = 0.7, col = "black")
+
+title(main = "Control (16hr) – Movers highlighted", adj = 0, cex.main = 0.8)
+
+## --- Thapsigargin plot ---
+plot2D(thps, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE, mirrorX = TRUE)
+highlightOnPlot(thps, featureNames(thps)[featureNames(thps) %in% movers],
+                pch = 21, bg = "black", cex = 1.5, args = list(mirrorY = TRUE, mirrorX = TRUE))
+
+# Label movers
+coords_thps <- plot2D(thps, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE, mirrorX = TRUE, plot = FALSE)
+coords_thps <- coords_thps[featureNames(thps) %in% movers, ]
+text(coords_thps[, 1], coords_thps[, 2],
+     labels = names[match(featureNames(thps)[featureNames(thps) %in% movers], movers)],
+     pos = 3, cex = 0.7, col = "black")
+
+title(main = "Thapsigargin (16hr) – Movers highlighted", adj = 0, cex.main = 0.8)
+
+# Legend
+plot.new()
+plot.window(xlim = c(0, 1), ylim = c(0, 1))
+addLegend(object = ctrl, fcol = "bandle.allocation.pred.pred")
+
+dev.off()
+
+
+# Open PDF device
+pdf(file.path("../figs", "35_Highlight_POI_1hr.pdf"), width = 11, height = 8)
+
+# Layout: Control & Thapsigargin side-by-side
+par(mfrow = c(1, 1))
+
+# Transparent class colors
+setStockcol(NULL)
+setStockcol(paste0(getStockcol(), "90")) 
+
+ctrl <- bandle_results[["1hr"]]$control_full
+thps <- bandle_results[["1hr"]]$thps_full
+
+# Movers
+movers <- c("Q92520", "Q92520_H", "O15372", "Q13347", "Q9UBQ5", "P55884")
+names <- c("FAM3C", "FAM3C_H", "EIF3H", "EIF3I", "EIF3K", "EIF3B")
+
+## --- Control plot ---
+plot2D(ctrl, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE, mirrorX = TRUE)
+highlightOnPlot(ctrl, featureNames(ctrl)[featureNames(ctrl) %in% movers],
+                pch = 21, bg = "black", cex = 1.5, args = list(mirrorY = TRUE, mirrorX = TRUE))
+
+# Label movers
+coords_ctrl <- plot2D(ctrl, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE, mirrorX = TRUE, plot = FALSE)
+coords_ctrl <- coords_ctrl[featureNames(ctrl) %in% movers, ]
+text(coords_ctrl[, 1], coords_ctrl[, 2],
+     labels = names[match(featureNames(ctrl)[featureNames(ctrl) %in% movers], movers)],
+     pos = 3, cex = 0.7, col = "black")
+
+title(main = "Control (1hr) – Movers highlighted", adj = 0, cex.main = 0.8)
+
+## --- Thapsigargin plot ---
+plot2D(thps, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE, mirrorX = TRUE)
+highlightOnPlot(thps, featureNames(thps)[featureNames(thps) %in% movers],
+                pch = 21, bg = "black", cex = 1.5, args = list(mirrorY = TRUE, mirrorX = TRUE))
+
+# Label movers
+coords_thps <- plot2D(thps, fcol = "bandle.allocation.pred.pred", mirrorY = TRUE, mirrorX = TRUE, plot = FALSE)
+coords_thps <- coords_thps[featureNames(thps) %in% movers, ]
+text(coords_thps[, 1], coords_thps[, 2],
+     labels = names[match(featureNames(thps)[featureNames(thps) %in% movers], movers)],
+     pos = 3, cex = 0.7, col = "black")
+
+title(main = "Thapsigargin (1hr) – Movers highlighted", adj = 0, cex.main = 0.8)
+
+# Legend
+plot.new()
+plot.window(xlim = c(0, 1), ylim = c(0, 1))
+addLegend(object = ctrl, fcol = "bandle.allocation.pred.pred")
+
+dev.off()
+
+
+# Open PDF device
+pdf(file.path("../Figs", "43_Highlight_POI_24hr.pdf"), width = 11, height = 8)
+
+# Layout: Control & Thapsigargin side-by-side
+par(mfrow = c(1, 1))
+
+# Transparent class colors
+setStockcol(NULL)
+setStockcol(paste0(getStockcol(), "90")) 
+
+ctrl <- bandle_results[["24hr"]]$control_full
+thps <- bandle_results[["24hr"]]$thps_full
+
+# Movers
+movers <- c("O60884", "O95817", "P31689", "Q99615", "P25685")
+names <- c("DNAJA2", "BAG3", "DNAJA1", "DNAJC7", "DNAJB1")
+
+## --- Control plot ---
+plot2D(ctrl, fcol = "bandle.allocation.pred.pred")
+highlightOnPlot(ctrl, featureNames(ctrl)[featureNames(ctrl) %in% movers],
+                pch = 21, bg = "black", cex = 1.5)
+
+# Label movers
+coords_ctrl <- plot2D(ctrl, fcol = "bandle.allocation.pred.pred", plot = FALSE)
+coords_ctrl <- coords_ctrl[featureNames(ctrl) %in% movers, ]
+text(coords_ctrl[, 1], coords_ctrl[, 2],
+     labels = names[match(featureNames(ctrl)[featureNames(ctrl) %in% movers], movers)],
+     pos = 3, cex = 0.7, col = "black")
+
+title(main = "Control (24hr) – Movers highlighted", adj = 0, cex.main = 0.8)
+
+## --- Thapsigargin plot ---
+plot2D(thps, fcol = "bandle.allocation.pred.pred")
+highlightOnPlot(thps, featureNames(thps)[featureNames(thps) %in% movers],
+                pch = 21, bg = "black", cex = 1.5)
+
+# Label movers
+coords_thps <- plot2D(thps, fcol = "bandle.allocation.pred.pred", plot = FALSE)
+coords_thps <- coords_thps[featureNames(thps) %in% movers, ]
+text(coords_thps[, 1], coords_thps[, 2],
+     labels = names[match(featureNames(thps)[featureNames(thps) %in% movers], movers)],
+     pos = 3, cex = 0.7, col = "black")
+
+title(main = "Thapsigargin (24hr) – Movers highlighted", adj = 0, cex.main = 0.8)
+
+# Legend
+plot.new()
+plot.window(xlim = c(0, 1), ylim = c(0, 1))
+addLegend(object = ctrl, fcol = "bandle.allocation.pred.pred")
+
+dev.off()
+
