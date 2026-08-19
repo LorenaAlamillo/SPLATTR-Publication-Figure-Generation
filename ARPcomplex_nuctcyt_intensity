@@ -1,0 +1,119 @@
+
+library(readr)
+library(dplyr)
+library(ggbeeswarm)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+
+earlyTP <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ARPcomplex subunits translocation 1hr4hr 092625.txt"))
+lateTP <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "ARPcomplex subunits translocation 16hr24hr 092725.txt"))
+
+# Rename by condition
+# Replace Well column in place
+earlyTP$Well <- sub("^[A-H]([0-9]+)$", "\\1", earlyTP$Well)
+lateTP$Well  <- sub("^[A-H]([0-9]+)$", "\\1", lateTP$Well)
+
+#Well_maps
+well_map_early <- c(
+  "1"  = "ARPC2_DMSO1hr",
+  "2"  = "ARPC2_Thaps1hr",
+  "3"  = "ARPC3_DMSO1hr",
+  "4"  = "ARPC3_Thaps1hr",
+  "5"  = "ARPC5_DMSO1hr",
+  "6"  = "ARPC5_Thaps1hr",
+  "7"  = "ARPC2_DMSO4hr",
+  "8"  = "ARPC2_Thaps4hr",
+  "9"  = "ARPC3_DMSO4hr",
+  "10" = "ARPC3_Thaps4hr",
+  "11" = "ARPC5_DMSO4hr",
+  "12" = "ARPC5_Thaps4hr"
+)
+
+well_map_late <- c(
+  "1"  = "ARPC2_DMSO16hr",
+  "2"  = "ARPC2_Thaps16hr",
+  "3"  = "ARPC3_DMSO16hr",
+  "4"  = "ARPC3_Thaps16hr",
+  "5"  = "ARPC5_DMSO16hr",
+  "6"  = "ARPC5_Thaps16hr",
+  "7"  = "ARPC2_DMSO24hr",
+  "8"  = "ARPC2_Thaps24hr",
+  "9"  = "ARPC3_DMSO24hr",
+  "10" = "ARPC3_Thaps24hr",
+  "11" = "ARPC5_DMSO24hr",
+  "12" = "ARPC5_Thaps24hr"
+)
+
+# Apply to your dataframes
+earlyTP$Well <- well_map_early[earlyTP$Well]
+lateTP$Well  <- well_map_late[lateTP$Well]
+
+# Bind
+allTP <- rbind(earlyTP, lateTP)
+
+# Remove 0s and 1s in nuccyt ratio
+allTP <- allTP[allTP$CircRingAvgIntenRatioCh2 != 0, ]
+allTP <- allTP[abs(allTP$CircRingAvgIntenRatioCh2 - 1) > 0.01, ]
+
+# Sort by nucleus size and keep those closest to nucleus median size
+allTP_sub <- allTP %>%
+  group_by(Well) %>%
+  mutate(med = median(NucAreaCh1, na.rm = TRUE)) %>%         # compute median per Well
+  mutate(dist_to_med = abs(NucAreaCh1 - med)) %>%            # distance from median
+  slice_min(order_by = dist_to_med, n = 50, with_ties = FALSE) %>% # take 50 closest
+  ungroup()
+
+# Plot
+# Split Well into Construct, Treatment, Time if not already
+allTP_plot <- allTP_sub %>%
+  separate(Well, into = c("Construct", "TreatmentTime"), sep = "_") %>%
+  separate(TreatmentTime, into = c("Treatment", "Time"), sep = "(?<=DMSO|Thaps)") %>%
+  mutate(Time = factor(Time, levels = c("1hr", "4hr", "16hr", "24hr")))
+
+# Loop over constructs
+for (construct in unique(allTP_plot$Construct)) {
+  
+  # Subset data for this construct
+  sub_plot <- allTP_plot %>% filter(Construct == construct)
+  
+  # Run Wilcoxon test per Time (only within this construct)
+  wilcox_results <- compare_means(
+    CircRingAvgIntenRatioCh2 ~ Treatment,
+    group.by = "Time",
+    data = sub_plot,
+    method = "wilcox.test"
+  ) %>%
+    mutate(Time_num = as.numeric(Time),
+           xmin = Time_num - 0.1,
+           xmax = Time_num + 0.1)
+  
+  # Calculate median values per Construct × Treatment × Time
+  medians <- allTP_plot %>%
+  group_by(Construct, Treatment, Time) %>%
+  summarise(med_val = median(CircRingAvgIntenRatioCh2, na.rm = TRUE), .groups = "drop")
+  
+  # Plot
+  p <- ggplot(sub_plot, aes(x = Time, y = CircRingAvgIntenRatioCh2, color = Treatment)) +
+    #geom_point(position = position_dodge(width = 0.3), alpha = 0.7) +
+    geom_beeswarm(alpha = 0.7, dodge.width = 0.8) +
+    geom_line(data = medians %>% filter(Construct == construct),
+              aes(x = Time, y = med_val, group = Treatment, color = Treatment),
+              size = 0.8) +
+    stat_pvalue_manual(wilcox_results,
+                       label = "p.signif",
+                       y.position = max(sub_plot$CircRingAvgIntenRatioCh2) * 1.05) +
+    coord_cartesian(ylim = c(0,7)) +
+    scale_color_manual(values = c("DMSO" = "black", "Thaps" = "red3")) +
+    theme_bw() +
+    labs(title = paste("Nucleus to Cytosolic Intensity Ratio -", construct),
+         x = "Timepoint",
+         y = "Nuc/Cyt Intensity")
+  
+  print(p)  # show in RStudio/console
+  
+  # Save one PDF per construct
+  ggsave(paste0("../Figs/", construct, "_NucCyt_Intensity_beeswarm.pdf"),
+        plot = p, width = 8, height = 6)
+}
+
