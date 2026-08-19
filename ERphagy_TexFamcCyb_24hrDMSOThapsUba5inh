@@ -1,0 +1,120 @@
+library(readr)
+library(dplyr)
+library(ggbeeswarm)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+
+# Download data
+TP <- read_tsv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "AC16 ERphagy TEX FAMC CYB 24hr dmso thaps uba5 10 50 041726.txt"))
+
+# Rename by condition
+# Replace Well column in place
+TP$Well <- sub("^[A-H]([0-9]+)$", "\\1", TP$Well)
+# Well_maps
+well_map <- c(
+  "1"  = "TEX_DMSO",
+  "2"  = "TEX_Thaps",
+  "3"  = "TEX_10UBA5",
+  "4"  = "TEX_50UBA5",
+  "5"  = "FAMC_DMSO",
+  "6"  = "FAMC_Thaps",
+  "7"  = "FAMC_10UBA5",
+  "8"  = "FAMC_50UBA5",
+  "9"  = "CYB_DMSO",
+  "10"  = "CYB_Thaps",
+  "11"  = "CYB_10UBA5",
+  "12"  = "CYB_50UBA5")
+# Apply to dataframes
+TP$Well  <- well_map[TP$Well]
+
+# Filter
+allTP <- TP
+# Remove 0s in correlation coefficient and remove negative numbers
+allTP <- allTP[allTP$ROI_A_CorrelationCoef != 0, ]
+allTP <- allTP[allTP$ROI_A_CorrelationCoef > 0, ]
+allTP <- allTP %>%
+  filter(!is.na(Well))
+
+# Sort by nucleus size and keep those closest to nucleus median size
+allTP_sub <- allTP %>%
+  group_by(Well) %>%
+  mutate(med = median(ObjectAreaCh1, na.rm = TRUE)) %>%         # compute median per Well
+  mutate(dist_to_med = abs(ObjectAreaCh1 - med)) %>%            # distance from median
+  slice_min(order_by = dist_to_med, n = 150, with_ties = FALSE) %>% # take closest
+  ungroup()
+
+# Seperate plots
+constructs <- levels(allTP_plot$Construct)
+
+pdf("../Figs/15_ERphagy_TexFamcCyb_seperate.pdf", width = 6, height = 5)
+
+for (con in constructs) {
+  
+  df_sub <- allTP_plot %>% filter(Construct == con)
+  
+  # Recompute stats per construct
+  wilcox_sub <- compare_means(
+    ROI_A_CorrelationCoef ~ Treatment,
+    data = df_sub,
+    method = "wilcox.test",
+    ref.group = "Thaps"
+  )
+  
+  # y positions
+  y_base <- max(df_sub$ROI_A_CorrelationCoef, na.rm = TRUE)
+  
+  wilcox_sub <- wilcox_sub %>%
+    arrange(group2) %>%
+    mutate(y.position = y_base * (1.05 + 0.05 * row_number()))
+  
+  # medians
+  medians_sub <- df_sub %>%
+    group_by(Treatment) %>%
+    summarise(
+      med_val = median(ROI_A_CorrelationCoef, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  p <- ggplot(df_sub, aes(x = Treatment, y = ROI_A_CorrelationCoef, color = Treatment)) +
+    
+    geom_beeswarm(size = 0.4, cex = 0.5) +
+    
+    stat_pvalue_manual(
+      wilcox_sub,
+      label = "p.signif",
+      xmin = "group1",
+      xmax = "group2",
+      y.position = "y.position",
+      tip.length = 0.01
+    ) +
+    
+    geom_segment(
+      data = medians_sub,
+      aes(
+        x = as.numeric(Treatment) - 0.25,
+        xend = as.numeric(Treatment) + 0.25,
+        y = med_val,
+        yend = med_val,
+        color = Treatment
+      ),
+      size = 0.8
+    ) +
+    
+    coord_cartesian(ylim = c(0, 1.2)) +
+    
+    scale_color_manual(values = c(
+      "DMSO" = "black",
+      "Thaps" = "red3",
+      "10UBA5" = "cornflowerblue",
+      "50UBA5" = "blue3"
+    )) +
+    
+    ggtitle(con) +
+    theme_bw()
+  
+  print(p)  
+}
+
+dev.off()
+
