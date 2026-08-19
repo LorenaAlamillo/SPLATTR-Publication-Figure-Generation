@@ -1,0 +1,492 @@
+library(tidyverse)
+library(ggthemes)
+library(ggpubr)
+library(org.Hs.eg.db)
+library(MSnbase)
+library(pRoloc)
+library(bandle)
+
+#download data
+sim4pick4spin <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20240530_LOPITDC_Frxn_Comparison/procecessed", "12a_4pick&4spin_simfromorg10spin.txt"))
+tensspins4pick4spin <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20240530_LOPITDC_Frxn_Comparison/procecessed", "08b_merged_tensspins4pick4spin.txt"))
+
+# Load markers 
+markers <- readRDS(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20240530_LOPITDC_Frxn_Comparison/procecessed", "02_Markers.Rds"))
+
+# Get 10spin bandle 
+bandleres10s <- readRDS(file=file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20240530_LOPITDC_Frxn_Comparison/procecessed", "09_TrainedBandle_10spin.Rds")) 
+bandleres10s <- bandleProcess(bandleres10s)
+
+# Length of 2, one for my spins and one for original spins
+length(summaries(bandleres10s))
+pe1forsim <- posteriorEstimates(summaries(bandleres10s)[[1]])
+pe2forsim <- posteriorEstimates(summaries(bandleres10s)[[2]])
+
+# Get bandle for simulated 4pick and 4spin from 10spin
+bandleresforsim <- readRDS(file=file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20240530_LOPITDC_Frxn_Comparison/procecessed", "12a_TrainedBandle_simfromorg10spin.Rds")) 
+
+bandleresforsim <- bandleProcess(bandleresforsim)
+
+# Length of 2, one for my spins and one for original spins
+length(summaries(bandleresforsim))
+pe1forsim <- posteriorEstimates(summaries(bandleresforsim)[[1]])
+pe2forsim <- posteriorEstimates(summaries(bandleresforsim)[[2]])
+
+expbandleres <- readRDS(file=file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20240530_LOPITDC_Frxn_Comparison/procecessed", "08b_TrainedBandle_4pickvs4spin_mergedatasets.Rds"))
+expbandleres <- bandleProcess(expbandleres)
+
+# Length of 2, one for 4pick one for 4spin
+length(summaries(expbandleres))
+pe1exp <- posteriorEstimates(summaries(expbandleres)[[1]])
+pe2exp <- posteriorEstimates(summaries(expbandleres)[[2]])
+
+# msn prep
+# Remove non-unique proteins, then extract UniProt
+tensspins4pick4spin  <- tensspins4pick4spin  |> 
+  dplyr::filter(stringr::str_count(rowname, ",") == 0) |>
+  dplyr::mutate(rowname = gsub("sp\\|(.+?)\\|.*", "\\1", rowname))
+sim4pick4spin  <- sim4pick4spin  |> 
+  dplyr::filter(stringr::str_count(rowname, ",") == 0) |>
+  dplyr::mutate(rowname = gsub("sp\\|(.+?)\\|.*", "\\1", rowname))
+
+# msn for experimental 
+# Remove non-unique proteins, then extract UniProt
+tensspins4pick4spin <- tensspins4pick4spin |> 
+  dplyr::filter(stringr::str_count(rowname, ",") == 0) |>
+  dplyr::mutate(rowname = gsub("sp\\|(.+?)\\|.*", "\\1", rowname))
+
+# R1 4pick
+fourpickR1 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("4pR1_F", 1:4)),
+                                    ecol = paste0("4pR1_F", 1:4),
+                                    fnames="rowname") |>
+
+  MSnbase::normalize(method="sum") |> 
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# R2 4pick
+fourpickR2 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("4pR2_F", 1:4)),
+                                    ecol = paste0("4pR2_F", 1:4),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# R3 4pick
+fourpickR3 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("4pR3_F", 1:4)),
+                                    ecol = paste0("4pR3_F", 1:4),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# R1 4spins
+fourspinsR1 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("4sR1_F", 1:4)),
+                                    ecol = paste0("4sR1_F", 1:4),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |> 
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# R2 4spins
+fourspinsR2 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("4sR2_F", 1:4)),
+                                    ecol = paste0("4sR2_F", 1:4),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# R3 4spins
+fourspinsR3 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("4sR3_F", 1:4)),
+                                    ecol = paste0("4sR3_F", 1:4),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# Join into an MSn list
+comp_listexp <- MSnbase::commonFeatureNames(c(fourpickR1, fourpickR2, fourpickR3, fourspinsR1, fourspinsR2, fourspinsR3))
+
+fourpickreps <- list(comp_listexp[[1]], comp_listexp[[2]], comp_listexp[[3]])
+fourspinreps <- list(comp_listexp[[4]], comp_listexp[[5]], comp_listexp[[6]])
+
+xxe <- bandlePredict(fourpickreps, 
+                    fourspinreps, 
+                    params = expbandleres, 
+                    fcol = "markers")
+res_fourpickreps <- xxe[[1]]
+res_fourspinreps <- xxe[[2]]
+
+res_fourpickreps[[1]] <- getPredictions(res_fourpickreps[[1]], 
+                              fcol = "bandle.allocation",  
+                              scol = "bandle.probability",    
+                              mcol = "markers", 
+                              t = .9)
+
+res_fourspinreps[[1]] <- getPredictions(res_fourspinreps[[1]], 
+                              fcol = "bandle.allocation",
+                              scol = "bandle.probability", 
+                              mcol = "markers",      
+                              t = .9)
+
+## add outlier probability
+fData(res_fourpickreps[[1]])$bandle.outlier.t <- 1 -  fData(res_fourpickreps[[1]])$bandle.outlier
+fData(res_fourspinreps[[1]])$bandle.outlier.t <- 1 -  fData(res_fourspinreps[[1]])$bandle.outlier
+
+## threshold again, now on the outlier probability
+res_fourpickreps[[1]] <- getPredictions(res_fourpickreps[[1]],
+                              fcol = "bandle.allocation.pred",
+                              scol = "bandle.outlier.t",
+                              mcol = "markers",
+                              t = .9)
+
+res_fourspinreps[[1]] <- getPredictions(res_fourspinreps[[1]],
+                               fcol = "bandle.allocation.pred",
+                               scol = "bandle.outlier.t",
+                               mcol = "markers",
+                               t = .9)
+
+## Add  results to second and third replicates
+res_alloc_fourpickreps <- fData(res_fourpickreps[[1]])$bandle.allocation.pred #.pred
+fData(res_fourpickreps[[2]])$bandle.allocation.pred <- res_alloc_fourpickreps
+fData(res_fourpickreps[[3]])$bandle.allocation.pred <- res_alloc_fourpickreps
+
+## Add results to second and third replicates
+res_alloc_fourspinreps <- fData(res_fourspinreps[[1]])$bandle.allocation.pred #.pred
+fData(res_fourspinreps[[2]])$bandle.allocation.pred <- res_alloc_fourspinreps
+fData(res_fourspinreps[[3]])$bandle.allocation.pred <- res_alloc_fourspinreps
+
+# msn 10spins
+# R1
+R1 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("R1_F", 1:10)),
+                                    ecol = paste0("R1_F", 1:10),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |> 
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# R2
+R2 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("R2_F", 1:10)),
+                                    ecol = paste0("R2_F", 1:10),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# R3
+R3 <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("R3_F", 1:10)),
+                                    ecol = paste0("R3_F", 1:10),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# original R1
+original_r1_msn <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("CT_F", 1:10, "R1")),
+                                    ecol = paste0("CT_F", 1:10, "R1"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |> 
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# original R2
+original_r2_msn <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("CT_F", 1:10, "R2")),
+                                    ecol = paste0("CT_F", 1:10, "R2"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# original R3
+original_r3_msn <- MSnbase::readMSnSet2(file=tensspins4pick4spin |> dplyr::select(rowname, paste0("CT_F", 1:10, "R3")),
+                                    ecol = paste0("CT_F", 1:10, "R3"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# Join into an MSn list
+comp_list10s <- MSnbase::commonFeatureNames(c(R1, R2, R3, original_r1_msn, original_r2_msn, original_r3_msn))
+
+tenspinreps <- list(comp_list10s[[1]], comp_list10s[[2]], comp_list10s[[3]])
+org10spinreps <- list(comp_list10s[[4]], comp_list10s[[5]], comp_list10s[[6]])
+
+xx10 <- bandlePredict(tenspinreps, 
+                    org10spinreps, 
+                    params = bandleres10s, 
+                    fcol = "markers")
+res_tenspinreps <- xx10[[1]]
+res_org10spinreps <- xx10[[2]]
+
+res_tenspinreps[[1]] <- getPredictions(res_tenspinreps[[1]], 
+                              fcol = "bandle.allocation",  
+                              scol = "bandle.probability",    
+                              mcol = "markers", 
+                              t = .9)
+
+res_org10spinreps[[1]] <- getPredictions(res_org10spinreps[[1]], 
+                              fcol = "bandle.allocation",
+                              scol = "bandle.probability", 
+                              mcol = "markers",      
+                              t = .9)
+
+## add outlier probability
+fData(res_tenspinreps[[1]])$bandle.outlier.t <- 1 -  fData(res_tenspinreps[[1]])$bandle.outlier
+fData(res_org10spinreps[[1]])$bandle.outlier.t <- 1 -  fData(res_org10spinreps[[1]])$bandle.outlier
+
+## threshold again, now on the outlier probability
+res_tenspinreps[[1]] <- getPredictions(res_tenspinreps[[1]],
+                              fcol = "bandle.allocation.pred",
+                              scol = "bandle.outlier.t",
+                              mcol = "markers",
+                              t = .9)
+
+res_org10spinreps[[1]] <- getPredictions(res_org10spinreps[[1]],
+                               fcol = "bandle.allocation.pred",
+                               scol = "bandle.outlier.t",
+                               mcol = "markers",
+                               t = .9)
+## Add  results to second and third replicates
+res_alloc_tenspinreps <- fData(res_tenspinreps[[1]])$bandle.allocation.pred #.pred
+fData(res_tenspinreps[[2]])$bandle.allocation.pred <- res_alloc_tenspinreps
+fData(res_tenspinreps[[3]])$bandle.allocation.pred <- res_alloc_tenspinreps
+
+## Add results to second and third replicates
+res_alloc_org10spinreps <- fData(res_org10spinreps[[1]])$bandle.allocation.pred #.pred
+fData(res_org10spinreps[[2]])$bandle.allocation.pred <- res_alloc_org10spinreps
+fData(res_org10spinreps[[3]])$bandle.allocation.pred <- res_alloc_org10spinreps
+
+# msn for simulation
+# fourspin sim R1
+fourspin_simR1_msn <- MSnbase::readMSnSet2(file=sim4pick4spin |> dplyr::select(rowname, paste0("spinsim", 1:4, "R1")),
+                                    ecol = paste0("spinsim", 1:4, "R1"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+    
+# fourspin sim R2
+fourspin_simR2_msn <- MSnbase::readMSnSet2(file=sim4pick4spin |> dplyr::select(rowname, paste0("spinsim", 1:4, "R2")),
+                                    ecol = paste0("spinsim", 1:4, "R2"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# fourspin sim R3
+fourspin_simR3_msn <- MSnbase::readMSnSet2(file=sim4pick4spin |> dplyr::select(rowname, paste0("spinsim", 1:4, "R3")),
+                                    ecol = paste0("spinsim", 1:4, "R3"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# four pick sim R1
+fourpick_simR1_msn <- MSnbase::readMSnSet2(file=sim4pick4spin |> dplyr::select(rowname, paste0("simfrx", 1:4, "R1")),
+                                    ecol = paste0("simfrx", 1:4, "R1"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+  
+# four pick sim R2
+fourpick_simR2_msn <- MSnbase::readMSnSet2(file=sim4pick4spin |> dplyr::select(rowname, paste0("simfrx", 1:4, "R2")),
+                                    ecol = paste0("simfrx", 1:4, "R2"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+
+# four pick sim R3
+fourpick_simR3_msn <- MSnbase::readMSnSet2(file=sim4pick4spin |> dplyr::select(rowname, paste0("simfrx", 1:4, "R3")),
+                                    ecol = paste0("simfrx", 1:4, "R3"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers, verbose=F)
+  
+# Join into an MSn list
+comp_listsim <- MSnbase::commonFeatureNames(c(fourpick_simR1_msn, fourpick_simR2_msn, fourpick_simR3_msn, fourspin_simR1_msn, fourspin_simR2_msn, fourspin_simR3_msn))
+
+simfourpickreps <- list(comp_listsim[[1]], comp_listsim[[2]], comp_listsim[[3]])
+simfourspinreps <- list(comp_listsim[[4]], comp_listsim[[5]], comp_listsim[[6]])
+
+xxsim <- bandlePredict(simfourpickreps, 
+                    simfourspinreps, 
+                    params = bandleresforsim, 
+                    fcol = "markers")
+res_simfourpickreps <- xxsim[[1]]
+res_simfourspinreps <- xxsim[[2]]
+
+res_simfourpickreps[[1]] <- getPredictions(res_simfourpickreps[[1]], 
+                              fcol = "bandle.allocation",  
+                              scol = "bandle.probability",    
+                              mcol = "markers", 
+                              t = .9)
+
+res_simfourspinreps[[1]] <- getPredictions(res_simfourspinreps[[1]], 
+                              fcol = "bandle.allocation",
+                              scol = "bandle.probability", 
+                              mcol = "markers",      
+                              t = .9)
+
+## add outlier probability
+fData(res_simfourpickreps[[1]])$bandle.outlier.t <- 1 -  fData(res_simfourpickreps[[1]])$bandle.outlier
+fData(res_simfourspinreps[[1]])$bandle.outlier.t <- 1 -  fData(res_simfourspinreps[[1]])$bandle.outlier
+
+## threshold again, now on the outlier probability
+res_simfourpickreps[[1]] <- getPredictions(res_simfourpickreps[[1]],
+                              fcol = "bandle.allocation.pred",
+                              scol = "bandle.outlier.t",
+                              mcol = "markers",
+                              t = .9)
+
+res_simfourspinreps[[1]] <- getPredictions(res_simfourspinreps[[1]],
+                               fcol = "bandle.allocation.pred",
+                               scol = "bandle.outlier.t",
+                               mcol = "markers",
+                               t = .9)
+
+## Add  results to second and third replicates
+res_alloc_simfourpickreps <- fData(res_simfourpickreps[[1]])$bandle.allocation.pred #.pred
+fData(res_simfourpickreps[[2]])$bandle.allocation.pred <- res_alloc_simfourpickreps
+fData(res_simfourpickreps[[3]])$bandle.allocation.pred <- res_alloc_simfourpickreps
+
+## Add results to second and third replicates
+res_alloc_simfourspinreps <- fData(res_simfourspinreps[[1]])$bandle.allocation.pred #.pred
+fData(res_simfourspinreps[[2]])$bandle.allocation.pred <- res_alloc_simfourspinreps
+fData(res_simfourspinreps[[3]])$bandle.allocation.pred <- res_alloc_simfourspinreps
+
+# Compare plots using QSEP
+#create objects for QSEP
+qsep_4pickR1 <- QSep(res_fourpickreps[[1]], fcol = "bandle.allocation.pred")
+qsep_4pickR2 <- QSep(res_fourpickreps[[2]], fcol = "bandle.allocation.pred")
+qsep_4pickR3 <- QSep(res_fourpickreps[[3]], fcol = "bandle.allocation.pred")
+qsep_4spinR1 <- QSep(res_fourspinreps[[1]], fcol = "bandle.allocation.pred")
+qsep_4spinR2 <- QSep(res_fourspinreps[[2]], fcol = "bandle.allocation.pred")
+qsep_4spinR3 <- QSep(res_fourspinreps[[3]], fcol = "bandle.allocation.pred")
+qsep_sim4pickR1 <- QSep(res_simfourpickreps[[1]], fcol = "bandle.allocation.pred")
+qsep_sim4pickR2 <- QSep(res_simfourpickreps[[2]], fcol = "bandle.allocation.pred")
+qsep_sim4pickR3 <- QSep(res_simfourpickreps[[3]], fcol = "bandle.allocation.pred")
+qsep_sim4spinR1 <- QSep(res_simfourspinreps[[1]], fcol = "bandle.allocation.pred")
+qsep_sim4spinR2 <- QSep(res_simfourspinreps[[2]], fcol = "bandle.allocation.pred")
+qsep_sim4spinR3 <- QSep(res_simfourspinreps[[3]], fcol = "bandle.allocation.pred")
+qsep_L10spinR1 <- QSep(res_tenspinreps[[1]], fcol = "bandle.allocation.pred")
+qsep_L10spinR2 <- QSep(res_tenspinreps[[2]], fcol = "bandle.allocation.pred")
+qsep_L10spinR3 <- QSep(res_tenspinreps[[3]], fcol = "bandle.allocation.pred")
+qsep_J10spinR1 <- QSep(res_org10spinreps[[1]], fcol = "bandle.allocation.pred")
+qsep_J10spinR2 <- QSep(res_org10spinreps[[2]], fcol = "bandle.allocation.pred")
+qsep_J10spinR3 <- QSep(res_org10spinreps[[3]], fcol = "bandle.allocation.pred")
+
+# Make a dataframe for each qsep
+data_qsep_4pickR1 <- data.frame(qsep(qsep_4pickR1))
+data_qsep_4pickR2 <- data.frame(qsep(qsep_4pickR2))
+data_qsep_4pickR3 <- data.frame(qsep(qsep_4pickR3))
+data_qsep_4spinR1 <- data.frame(qsep(qsep_4spinR1))
+data_qsep_4spinR2 <- data.frame(qsep(qsep_4spinR2))
+data_qsep_4spinR3 <- data.frame(qsep(qsep_4spinR3))
+data_qsep_L10spinR1 <- data.frame(qsep(qsep_L10spinR1))
+data_qsep_L10spinR2 <- data.frame(qsep(qsep_L10spinR2))
+data_qsep_L10spinR3 <- data.frame(qsep(qsep_L10spinR3))
+
+# Make a new data frame for each dataset with averages of each column
+# Calculate the mean for each column
+qsep_4pickR1_means <- colMeans(data_qsep_4pickR1)
+qsep_4pickR2_means <- colMeans(data_qsep_4pickR2)
+qsep_4pickR3_means <- colMeans(data_qsep_4pickR3)
+qsep_4spinR1_means <- colMeans(data_qsep_4spinR1)
+qsep_4spinR2_means <- colMeans(data_qsep_4spinR2)
+qsep_4spinR3_means <- colMeans(data_qsep_4spinR3)
+qsep_L10spinR1_means <- colMeans(data_qsep_L10spinR1)
+qsep_L10spinR2_means <- colMeans(data_qsep_L10spinR2)
+qsep_L10spinR3_means <- colMeans(data_qsep_L10spinR3)
+
+# Convert the result to a data frame
+qsep_4pickR1_means <- as.data.frame(t(qsep_4pickR1_means))
+qsep_4pickR2_means <- as.data.frame(t(qsep_4pickR2_means))
+qsep_4pickR3_means <- as.data.frame(t(qsep_4pickR3_means))
+qsep_4spinR1_means <- as.data.frame(t(qsep_4spinR1_means))
+qsep_4spinR2_means <- as.data.frame(t(qsep_4spinR2_means))
+qsep_4spinR3_means <- as.data.frame(t(qsep_4spinR3_means))
+qsep_L10spinR1_means <- as.data.frame(t(qsep_L10spinR1_means))
+qsep_L10spinR2_means <- as.data.frame(t(qsep_L10spinR2_means))
+qsep_L10spinR3_means <- as.data.frame(t(qsep_L10spinR3_means))
+
+#combine conditions into one dataframe
+Qsep_pick <- rbind(qsep_4pickR1_means, qsep_4pickR2_means, qsep_4pickR3_means)
+Qsep_spin <- rbind(qsep_4spinR1_means, qsep_4spinR2_means, qsep_4spinR3_means)
+Qsep_control <- rbind(qsep_L10spinR1_means, qsep_L10spinR2_means, qsep_L10spinR3_means)
+
+#get standard deviations of the columns
+pick_deviation <- data.frame(t(sapply(Qsep_pick, sd, na.rm = TRUE)))
+spin_deviation <- data.frame(t(sapply(Qsep_spin, sd, na.rm = TRUE)))
+control_deviation <- data.frame(t(sapply(Qsep_control, sd, na.rm = TRUE)))
+
+#get means for means
+pick_mean <- data.frame(t(sapply(Qsep_pick, mean, na.rm = TRUE)))
+spin_mean <- data.frame(t(sapply(Qsep_spin, mean, na.rm = TRUE)))
+control_mean <- data.frame(t(sapply(Qsep_control, mean, na.rm = TRUE)))
+
+#Put the data frames for a single replicate in one dataframe
+# Define the consistent column order
+consistent_order <- c("ER", "GA", "PM", "NUCLEUS", "MITOCHONDRION", "LYSOSOME", "CYTOSOL", "RIBOSOME", "PROTEASOME", "xCYTOSKELETON", "xCHROMATIN", "PEROXISOME")
+
+# Reorder the columns of each mean data frame
+control_mean <- control_mean[consistent_order]
+spin_mean <- spin_mean[consistent_order]
+pick_mean <- pick_mean[consistent_order]
+
+# Reorder columns for stdev 
+control_deviation <- control_deviation[consistent_order]
+spin_deviation <- spin_deviation[consistent_order]
+pick_deviation <- pick_deviation[consistent_order]
+
+# Combine the means into a single data frame
+mean_df <- data.frame(
+  DataFrame = rep(c("control_mean", "spin_mean", "pick_mean"), each = length(consistent_order)),
+  Group = rep(c("control", "spin", "pick"), each = length(consistent_order)),
+  Column = rep(consistent_order, times = 3),
+  Mean = c(as.numeric(control_mean), as.numeric(spin_mean), as.numeric(pick_mean)))
+
+stdev_df <- data.frame(
+  DataFrame = rep(c("control_deviation", "spin_deviation", "pick_deviation"), each = length(consistent_order)),
+  Group = rep(c("control", "spin", "pick"), each = length(consistent_order)),
+  Column = rep(consistent_order, times = 3),
+  Stdev = c(as.numeric(control_deviation), as.numeric(spin_deviation), as.numeric(pick_deviation)))
+
+plot_df <- mean_df %>%
+  left_join(stdev_df, by = c("Column", "Group"))
+
+pdf(file=file.path("../Figs", "QSEP_distances_by_organelle.pdf"), height=9, width=12, useDingbats = F)
+#plot the averages for each organelle of each method on a plot
+# Define colors for each organelle
+organelle_colors <- c(
+  "ER" = "steelblue",
+  "GA" = "seagreen",
+  "PM" = "pink1",
+  "NUCLEUS" = "turquoise2",
+  "MITOCHONDRION" = "yellow2",
+  "LYSOSOME" = "orange2",
+  "CYTOSOL" = "red3",
+  "RIBOSOME" = "yellowgreen",
+  "PROTEASOME" = "mediumorchid4",
+  "xCYTOSKELETON" = "midnightblue",
+  "xCHROMATIN" = "lightsteelblue",
+  "PEROXISOME" = "burlywood4")
+
+# Plot the data using ggplot2 with custom colors
+ggplot(plot_df, aes(x = Column, y = Mean, fill = Column)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_errorbar(aes(ymin = Mean - Stdev, ymax = Mean + Stdev),
+              width = 0.2, position = position_dodge(0.7)) +
+  facet_wrap(~ factor(DataFrame.x, levels = c("control_mean", "spin_mean", "pick_mean"))) +
+  labs(title = "Column Means of Multiple Data Frames", x = "Organelle", y = "Mean") +
+  scale_fill_manual(values = organelle_colors) +  # Assign colors to each organelle
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(expand = c(0, 0) ) +
+  guides(fill = FALSE)
+
+dev.off()
+
