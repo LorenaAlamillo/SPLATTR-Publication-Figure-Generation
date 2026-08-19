@@ -1,0 +1,113 @@
+#Here we use the GA localizations at 24hr control for all volcanos
+
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpointdensity)
+library(wesanderson)
+library(ggrepel)
+library(ggthemes)
+
+#download data
+light <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "51c_limma_Light.tsv"))
+heavy <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "51b_limma_Heavy.tsv"))
+allocations <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "50_24hrR1_Ctrl_localization.txt"))
+
+#extract GA proteins 
+#get GA proteins in list
+GA_proteins <- allocations %>% filter(bandle.allocation.pred.pred == "GA")
+GA_list <- GA_proteins$rowname
+
+#get GA light and heavy 
+GA_light <- light[light$Entry %in% GA_list, ]
+heavy$Entry <- paste0(heavy$Entry, "_H") #add _H to heavy proteins so they match to allocations
+GA_heavy <- heavy[heavy$Entry %in% GA_list, ]
+
+# Proteins to label
+highlight_collagen <- c("COL1A1", "COL6A1", "COL12A1", "COL3A1", "COL1A2", "COL6A3")
+highlight_processors <- c("P4HB", "RRBP1", "TXNDC5", "CRELD2", "GOLGA2", "MIA3", "PRDX4", "SDF2C1")
+highlight_proteins <- c(highlight_collagen, highlight_processors)
+
+# Label light
+# Get unique timepoints
+timepoints <- unique(GA_light$condition)
+
+# Loop through each timepoint
+for (tp in timepoints) {
+  df_tp <- GA_light[GA_light$condition == tp, ]
+  
+  # Add a color column for the highlighted proteins
+  df_tp$label_color <- NA
+  df_tp$label_color[df_tp$GN %in% highlight_collagen] <- "darkgoldenrod1"
+  df_tp$label_color[df_tp$GN %in% highlight_processors] <- "deeppink"
+  
+  g <- ggplot(data = df_tp, aes(x = logFC, y = -log10(P.Value))) +
+    geom_point(color = "#329c47", alpha = 0.6) +
+    ggthemes::theme_few() +
+    theme(aspect.ratio = 1) +
+    geom_text_repel(
+      data = subset(df_tp, GN %in% highlight_proteins),
+     aes(label = GN, color = I(label_color)),  # use I() to use actual colors
+     size = 2, 
+     force = 0.15, 
+     point.padding = 0, 
+     box.padding = 0
+      ) +
+    coord_cartesian(xlim = c(-2.4, 2.4), ylim = c(0, 8)) +
+    geom_vline(xintercept = 0) +
+    ggtitle(paste(tp)) +
+    xlab("Log2 Fold Change") +
+    stat_function(
+      fun = function(x) (-log10(0.05) + (log(1.2) / x)^2), 
+      lty = 2, 
+      n = 1500, 
+      xlim = c(-11, 11), 
+      linewidth = 0.2, 
+      alpha = 1
+    )
+  
+  ggsave(
+    plot = g,
+    filename = paste0("../figs/40v2_light_GA_", tp, "_volcano.pdf"),
+    width = 5, height = 5, useDingbats = FALSE)}
+
+# Label heavy
+# Get unique timepoints
+timepoints <- unique(GA_heavy$condition)
+
+# Loop through each timepoint
+for (tp in timepoints) {
+  df_tp <- GA_heavy[GA_heavy$condition == tp, ]
+  
+    # Add a color column for the highlighted proteins
+  df_tp$label_color <- NA
+  df_tp$label_color[df_tp$GN %in% highlight_collagen] <- "darkgoldenrod1"
+  df_tp$label_color[df_tp$GN %in% highlight_processors] <- "deeppink"
+  
+  g <- ggplot(data = df_tp, aes(x = logFC, y = -log10(P.Value))) +
+    geom_point(color = "#329c47", alpha = 0.6) +
+    ggthemes::theme_few() +
+    theme(aspect.ratio = 1) +
+    geom_text_repel(
+      data = subset(df_tp, GN %in% highlight_proteins),
+     aes(label = GN, color = I(label_color)),  # use I() to use actual colors
+     size = 2, 
+     force = 0.15, 
+     point.padding = 0, 
+     box.padding = 0
+      ) +
+    coord_cartesian(xlim = c(-2.4, 2.4), ylim = c(0, 8)) +
+    geom_vline(xintercept = 0) +
+    ggtitle(paste(tp)) +
+    xlab("Log2 Fold Change") +
+    stat_function(fun = function(x) (-log10(0.05) + (log(1.2) / x)^2), 
+                  lty = 2, n = 1500, xlim = c(-11, 11), linewidth = 0.2, alpha = 1)
+  
+  ggsave(plot = g,
+        filename = paste0("../figs/40v2_heavy_GA_", tp, "_volcano.pdf"),
+         width = 5, height = 5, useDingbats = FALSE)}
+g
+```
+
+
