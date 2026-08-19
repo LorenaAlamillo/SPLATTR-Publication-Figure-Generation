@@ -337,7 +337,6 @@ addLegend(object = ctrl, fcol = "bandle.allocation.pred.pred")
 
 dev.off()
 
-library(UniProt.ws)
 # Open PDF device
 pdf(file.path("../Figs", "43_Highlight_clearance_4hr.pdf"), width = 11, height = 8)
 
