@@ -284,8 +284,6 @@ movers24hr <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QE
 #select function to highlight
 movers1hr <- movers1hr %>% filter(ctrl_location == "Ribosome")
 movers4hr <- movers4hr %>% filter(grepl("HEXIM1|LRRFIP1|CIR1|PA2G4", gn))
-movers16hr <- movers16hr %>% filter(ctrl_location == "Cytosol") 
-movers24hr <- movers4hr %>% filter(grepl("FKBP10_H|GOLPH3_H|MCFD2_H|P4HA1_H|PLOD1_H|SLC39A7_H", gn))
 
 # Open PDF device
 pdf(file.path("../Figs", "43_Highlight_clearance_1hr.pdf"), width = 11, height = 8)
@@ -456,8 +454,8 @@ ctrl <- bandle_results[["24hr"]]$control_full
 thps <- bandle_results[["24hr"]]$thps_full
 
 # Movers
-movers <- movers24hr$rowname
-names <- movers24hr$gn
+movers <- c("Q96AY3_H", "Q9H4A6_H", "Q8NI22_H", "P13674_H", "Q02809_H", "Q92504_H")
+names <- c("FKBP10_H", "GOLPH3_H", "MCFD2_H", "P4HA1_H", "PLOD1_H", "SLC39A7_H")
 
 ## --- Control plot ---
 plot2D(ctrl, fcol = "bandle.allocation.pred.pred")
