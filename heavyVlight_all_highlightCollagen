@@ -1,0 +1,114 @@
+
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+
+#download data
+light <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "51c_limma_Light.tsv"))
+heavy <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/SPLATTR_QEHF/20241010_LA4SPLAT_AC16CtrlThps4hr24hrR3/processed", "51b_limma_Heavy.tsv"))
+
+#convert dataframes to data tables
+heavyDT <- as.data.table(heavy)
+lightDT <- as.data.table(light)
+
+#filter for significance
+heavy_sig <- heavyDT #[abs(logFC) > 0.1 & P.Value <= 0.2 | abs(logFC) <= 0.1]
+light_sig <- lightDT #[abs(logFC) > 0.1 & P.Value <= 0.2 | abs(logFC) <= 0.1] 
+
+#remove any duplicates
+heavy_sig <- heavy_sig %>%
+  group_by(GN, condition) %>%
+  summarise(logFC = mean(logFC, na.rm = TRUE), .groups = "drop")
+
+light_sig <- light_sig %>%
+  group_by(GN, condition) %>%
+  summarise(logFC = mean(logFC, na.rm = TRUE), .groups = "drop")
+
+#append heavy V light to condition
+heavy_sig <- heavy_sig %>%
+  mutate(condition = paste0(condition, "_heavy"))
+light_sig <- light_sig %>%
+  mutate(condition = paste0(condition, "_light"))
+
+#combine dataframes
+# Stack the two data frames vertically
+combined <- bind_rows(
+  light_sig,
+  heavy_sig)
+
+#Pivoting wider
+wide <- combined %>% select(logFC, GN, condition) %>% 
+  pivot_wider(., names_from = "condition", values_from = "logFC") %>% setDT()
+
+# Get proteins with sig degredation
+collagen <- light %>% filter(grepl("COL", GN, ignore.case = TRUE))
+collagen_GN <- collagen$GN
+light_sig <- light %>% filter(P.Value < .001 & logFC < -0.25)
+light_sig_GN <- light_sig$GN
+
+# plot all with sig deg labeled
+# Extract timepoints based on column names
+timepoints <- c("1hr", "4hr", "16hr", "24hr")
+
+#colors
+palette <- c(
+  "darkgrey",
+  "darkgrey",
+  "darkgrey",
+  "darkgrey",
+  "darkgrey",  
+  "darkgrey")
+
+# Loop over each timepoint
+for (tp in timepoints) {
+  
+  # Dynamically create column names for this timepoint
+  light_col <- paste0("THPS", tp, "_vs_Control", tp, "_light")
+  heavy_col <- paste0("THPS", tp, "_vs_Control", tp, "_heavy")
+  
+  # Subset and remove NA rows
+  df <- wide[!is.na(get(light_col)) & !is.na(get(heavy_col)), 
+                          .(GN, light = get(light_col), heavy = get(heavy_col))]
+  
+  # Add class label
+  df[, class := 
+                 fifelse(light < -0.2 & between(heavy, -0.2, 0.2), "Unlabeled Down",
+                 fifelse(between(light, -0.2, 0.2) & heavy < -0.2, "Labeled Down",
+                 fifelse(light > 0.2 & between(heavy, -0.2, 0.2), "Unlabeled Up",
+                 fifelse(between(light, -0.2, 0.2) & heavy > 0.2, "Labeled Up",
+                 fifelse(between(light, -0.2, 0.2) & between(heavy, -0.2, 0.2), "Unchanged", 
+                         "Other")))))]
+
+  # Subset for labeling
+  df_labelled <- df[GN %in% collagen_GN]
+  
+  # Plot
+  p <- ggplot(df, aes(x = light, y = heavy, color = class)) +
+    geom_point(size = 1) +
+    geom_vline(xintercept = c(-0.2, 0.2), linetype = "dashed", linewidth = 0.1) +
+    geom_hline(yintercept = c(-0.2, 0.2), linetype = "dashed", linewidth = 0.1) +
+      scale_color_manual(values = c(
+      "Labeled Down" = palette[6],
+      "Labeled Up" = palette[5],
+      "Unlabeled Down" = palette[4],
+      "Unlabeled Up" = palette[3],
+      "Unchanged" = palette[2],
+      "Other" = palette[1]
+    )) +
+    xlim(-1.5, 1.5) +   ## Set consistent x-axis
+    ylim(-1.5, 1.5) +   ## Set consistent y-axis
+    theme_classic() +
+    ylab("Heavy Thapsigargin_vs_Control") +
+    xlab("Light Thapsigargin_vs_Control") +
+    labs(title = "Log2FC Plot",
+         subtitle = paste("Timepoint:", tp, "| Log2FC limits = 0.2")) +
+    geom_text(data = df_labelled, aes(label = GN), color = "black", vjust = -0.2, size = 2) +
+    theme(text = element_text(size = 15), plot.title = element_text(hjust = 0.5))
+  
+  # Save plot
+  ggsave(
+  filename = paste0("../figs/28_log2FC_ALL_collagen_", tp, ".pdf"),
+  plot = p,
+  width = 6,
+  height = 6)}
+
