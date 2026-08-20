@@ -1,0 +1,81 @@
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggbeeswarm)
+
+# Download data
+df <- read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "AC16vsHeLa_resazurin_absorbance_5hr.xlsx"), sheet = 4)
+
+# Ddjust format
+# Convert wide → long
+df_long <- df %>%
+  pivot_longer(
+    cols = -Sample,             
+    names_to = "replicate",        # all other columns go into 'condition'
+    values_to = "value"            # values go into 'value'
+  ) %>%
+  # separate the combined column into pieces
+  separate(Sample, into = c("cell_line", "treatment", "timepoint"), sep = " ")
+
+#normalize thaps to dmso
+df_norm <- df_long %>%
+  group_by(cell_line, timepoint, replicate) %>%
+  mutate(
+    dmso_val = value[treatment == "dmso"],
+    normalized = ifelse(treatment == "thaps",
+                        value / dmso_val,
+                        NA)
+  ) %>%
+  ungroup() %>% 
+  na.omit() %>% 
+  dplyr::select(cell_line, timepoint, normalized)
+
+# Make timepoint numeric
+df_norm$timepoint <- as.numeric(df_norm$timepoint)
+
+# Get means, sds, and significance
+df_summary <- df_norm %>%
+  group_by(cell_line, timepoint) %>%
+  summarise(mean_norm = mean(normalized),
+            sd_norm = sd(normalized),
+            n = n(),
+            .groups = "drop")
+
+test_results <- df_norm %>%
+  group_by(timepoint) %>%
+  summarise(p_value = t.test(normalized ~ cell_line)$p.value) %>%
+  mutate(
+    p_value = round(p_value, 3),   # round to 3 decimals
+    sig = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      TRUE            ~ "ns"
+    )
+  )
+
+# Format levels
+# Ensure timepoint is a factor for proper x-axis labels
+df_norm$timepoint <- factor(df_norm$timepoint, levels = rev(sort(unique(df_norm$timepoint))))
+df_summary$timepoint <- factor(df_summary$timepoint, levels = levels(df_norm$timepoint))
+test_results$timepoint <- factor(test_results$timepoint, levels = levels(df_norm$timepoint))
+
+# Plot
+pdf("../Figs/AC16vsHeLa_CellViability_v2.pdf", width = 7, height = 5)
+p <- ggplot(df_norm, aes(x = timepoint, y = normalized, color = cell_line)) +
+  # points for all replicates
+  geom_beeswarm(alpha = 0.7, dodge.width = 0.8, size = 2, cex = 0.5) + 
+    # solid line at the mean
+  geom_line(data = df_summary, aes(x = timepoint, y = mean_norm, group = cell_line, color = cell_line), size = 0.7, alpha = 0.8)  +
+  scale_color_manual(values = c("ac16" = "red3", "hela" = "darkred")) +
+  labs(x = "Timepoint", y = "(Absorbance 570nm/620nm)/DMSO") +
+  theme_classic() +
+  # add t-test stars
+  geom_text(data = test_results,
+            aes(x = timepoint, y = max(df_summary$mean_norm) + 0.5, label = p_value),
+            inherit.aes = FALSE)
+p
+dev.off()
+
