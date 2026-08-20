@@ -1,0 +1,121 @@
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+library(ggbeeswarm)
+
+earlyTP <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "Endo_Proteins_1hr4hr_100325v2.txt"))
+lateTP <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/Cell_Insight/Data", "Endo_Proteins_16hr24hr_100325v2.txt"))
+
+# Rename by condition
+# Replace Well column in place
+earlyTP$Well <- sub("^[A-H]([0-9]+)$", "\\1", earlyTP$Well)
+lateTP$Well  <- sub("^[A-H]([0-9]+)$", "\\1", lateTP$Well)
+
+#Well_maps
+well_map_early <- c(
+  "1"  = "EHD2_DMSO1hr",
+  "2"  = "EHD2_Thaps1hr",
+  "3"  = "EHD4_DMSO1hr",
+  "4"  = "EHD4_Thaps1hr",
+  "5"  = "ATP6v0d1_DMSO1hr",
+  "6"  = "ATP6v0d1_Thaps1hr",
+  "7"  = "EHD2_DMSO4hr",
+  "8"  = "EHD2_Thaps4hr",
+  "9"  = "EHD4_DMSO4hr",
+  "10" = "EHD4_Thaps4hr",
+  "11" = "ATP6v0d1_DMSO4hr",
+  "12" = "ATP6v0d1_Thaps4hr"
+)
+
+well_map_late <- c(
+  "1"  = "EHD2_DMSO16hr",
+  "2"  = "EHD2_Thaps16hr",
+  "3"  = "EHD4_DMSO16hr",
+  "4"  = "EHD4_Thaps16hr",
+  "5"  = "ATP6v0d1_DMSO16hr",
+  "6"  = "ATP6v0d1_Thaps16hr",
+  "7"  = "EHD2_DMSO24hr",
+  "8"  = "EHD2_Thaps24hr",
+  "9"  = "EHD4_DMSO24hr",
+  "10" = "EHD4_Thaps24hr",
+  "11" = "ATP6v0d1_DMSO24hr",
+  "12" = "ATP6v0d1_Thaps24hr"
+)
+
+# Apply to your dataframes
+earlyTP$Well <- well_map_early[earlyTP$Well]
+lateTP$Well  <- well_map_late[lateTP$Well]
+
+# Bind
+allTP <- rbind(earlyTP, lateTP)
+
+# Calculate ring over circ (membrane over cytosol)
+allTP <- allTP %>% mutate(MembraneCytRatio = (RingAvgIntenCh2/CircAvgIntenCh2))
+
+# Remove 0s and 1s in nuccyt ratio
+allTP <- allTP[allTP$MembraneCytRatio != Inf, ]
+allTP <- allTP[allTP$MembraneCytRatio != 0, ]
+allTP <- allTP[abs(allTP$MembraneCytRatio - 1) > 0.01, ]
+allTP <- na.omit(allTP)
+
+# Sort by intensity of poi and take top 50 from each condition
+allTP_sub <- allTP %>% 
+  group_by(Well) %>% 
+  slice_max(order_by = AvgIntenCh2, n = 50)
+
+# Plot
+# Split Well into Construct, Treatment, Time if not already
+allTP_plot <- allTP_sub %>%
+  separate(Well, into = c("Construct", "TreatmentTime"), sep = "_") %>%
+  separate(TreatmentTime, into = c("Treatment", "Time"), sep = "(?<=DMSO|Thaps)") %>%
+  mutate(Time = factor(Time, levels = c("1hr", "4hr", "16hr", "24hr")))
+
+# Loop over constructs
+for (construct in unique(allTP_plot$Construct)) {
+  
+  # Subset data for this construct
+  sub_plot <- allTP_plot %>% filter(Construct == construct)
+  
+  # Run Wilcoxon test per Time (only within this construct)
+  wilcox_results <- compare_means(
+    MembraneCytRatio ~ Treatment,
+    group.by = "Time",
+    data = sub_plot,
+    method = "wilcox.test"
+  ) %>%
+    mutate(Time_num = as.numeric(Time),
+           xmin = Time_num - 0.1,
+           xmax = Time_num + 0.1)
+  
+  # Calculate median values per Construct × Treatment × Time
+  medians <- allTP_plot %>%
+  group_by(Construct, Treatment, Time) %>%
+  summarise(med_val = median(MembraneCytRatio, na.rm = TRUE), .groups = "drop")
+  
+  # Plot
+  p <- ggplot(sub_plot, aes(x = Time, y = MembraneCytRatio, color = Treatment)) +
+    #geom_point(position = position_dodge(width = 0.3), alpha = 0.7) +
+    geom_beeswarm(alpha = 0.7, dodge.width = 0.8) +
+    geom_line(data = medians %>% filter(Construct == construct),
+              aes(x = Time, y = med_val, group = Treatment, color = Treatment),
+              size = 0.8) +
+    stat_pvalue_manual(wilcox_results,
+                       label = "p.signif",
+                       y.position = max(sub_plot$MembraneCytRatio) * 1.05) +
+    coord_cartesian(ylim = c(0,2)) +
+    scale_color_manual(values = c("DMSO" = "black", "Thaps" = "red3")) +
+    theme_bw() +
+    labs(title = paste("Membrane to Cytoplasm Intensity Ratio -", construct),
+         x = "Timepoint",
+         y = "Mem/Cyt Intensity")
+  
+  print(p)  # show in RStudio/console
+  
+  # Save one PDF per construct
+ ggsave(paste0("../Figs/", construct, "MemCytRatio_beeswarm.pdf"),
+        plot = p, width = 8, height = 6)
+}
+
+
