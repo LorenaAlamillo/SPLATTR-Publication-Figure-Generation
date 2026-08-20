@@ -1,0 +1,56 @@
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggpointdensity)
+
+# Download data
+light <- readr::read_tsv(file.path("/Volumes/Omics-Shared/Lorena/06112025_InhibitDegradation_TMT/processed", "05_limma_light.tsv"))
+
+# Isolate 24hr
+light24 <- light %>% filter(condition ==	"BafA_24hr_vs_Control_24hr")
+# Collagen to label
+collagen24 <- light24 %>% filter(grepl("COL", GN, ignore.case = TRUE))
+collagen24 <- collagen24$GN
+# Volcano Plots
+g <- ggplot(data=light24, aes(x=logFC, y=-log10(P.Value)))
+g <- g + geom_pointdensity()
+g <- g + ggplot2::scale_color_gradientn(colours = "steelblue1")
+g <- g + ggthemes::theme_few() + theme(aspect.ratio=1) 
+g <- g + ggrepel::geom_text_repel(data = subset(light24, GN %in% collagen24), aes(label=gsub(" .*", "", GN)), size=1, force=0.15, point.padding = 0, box.padding = 0)
+g <- g + coord_cartesian(xlim=c(-1.7, 1.7),  ylim=c(0, 14)) + geom_vline(xintercept = 0)
+g <- g + ggtitle("BafA Thapsigargin 24hr vs Thapsigargin 24hr") + xlab("Log2 Fold Change")
+g <- g + stat_function(fun = function (x) (-log10(0.05)+(log(1.2)/(x))^2), lty=2, n=1500, xlim=c(-11, 11), linewidth=0.2, alpha=1)
+ggsave(plot=g, filename="../figs/17_BafA_24hrTHPS_Volcano.pdf", width=5, height=5, useDingbats=F)
+
+# Isolate 6hr MG132
+light6mg132 <- light %>% filter(condition ==	"MG132_6hr_vs_Control_6hr")
+# Collagen to label
+collagenmg132 <- light6mg132 %>% filter(grepl("COL", GN, ignore.case = TRUE))
+collagenmg132 <- collagenmg132$GN
+#Volcano Plots
+g <- ggplot(data=light6mg132, aes(x=logFC, y=-log10(P.Value)))
+g <- g + geom_pointdensity()
+g <- g + ggplot2::scale_color_gradientn(colours = "lightpink1")
+g <- g + ggthemes::theme_few() + theme(aspect.ratio=1) 
+g <- g + ggrepel::geom_text_repel(data = subset(light6mg132, GN %in% collagenmg132), aes(label=gsub(" .*", "", GN)), size=1, force=0.15, point.padding = 0, box.padding = 0)
+g <- g + coord_cartesian(xlim=c(-1.7, 1.7),  ylim=c(0, 14)) + geom_vline(xintercept = 0)
+g <- g + ggtitle("MG132 Thapsigargin 6hr vs Thapsigargin 6hr") + xlab("Log2 Fold Change")
+g <- g + stat_function(fun = function (x) (-log10(0.05)+(log(1.2)/(x))^2), lty=2, n=1500, xlim=c(-11, 11), linewidth=0.2, alpha=1)
+ggsave(plot=g, filename="../figs/17_MG132_6hrTHPS_Volcano.pdf", width=5, height=5, useDingbats=F)
+
+# Isolate 6hr BafA
+light6baf <- light %>% filter(condition ==	"BafA_6hr_vs_Control_6hr")
+# Collagen to label
+collagenbaf <- light6baf %>% filter(grepl("COL", GN, ignore.case = TRUE))
+collagenbaf <- collagenbaf$GN
+# Volcano Plots
+g <- ggplot(data=light6baf, aes(x=logFC, y=-log10(P.Value)))
+g <- g + geom_pointdensity()
+g <- g + ggplot2::scale_color_gradientn(colours = "powderblue")
+g <- g + ggthemes::theme_few() + theme(aspect.ratio=1) 
+g <- g + ggrepel::geom_text_repel(data = subset(light6baf, GN %in% collagenbaf), aes(label=gsub(" .*", "", GN)), size=1, force=0.15, point.padding = 0, box.padding = 0)
+g <- g + coord_cartesian(xlim=c(-1.7, 1.7),  ylim=c(0, 14)) + geom_vline(xintercept = 0)
+g <- g + ggtitle("BafA Thapsigargin 6hr vs Thapsigargin 6hr") + xlab("Log2 Fold Change")
+g <- g + stat_function(fun = function (x) (-log10(0.05)+(log(1.2)/(x))^2), lty=2, n=1500, xlim=c(-11, 11), linewidth=0.2, alpha=1)
+ggsave(plot=g, filename="../figs/17_BafA_6hrTHPS_Volcano.pdf", width=5, height=5, useDingbats=F)
+
