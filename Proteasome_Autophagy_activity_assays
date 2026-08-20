@@ -1,0 +1,122 @@
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(ggpubr)
+
+# Read data
+datasets <- 
+  list (
+    Proteasome = read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Activity_During_ERstress_forR.xlsx"), sheet = 1),
+    P_MG132 = read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Activity_During_ERstress_forR.xlsx"), sheet = 2),
+    P_BfA6hr = read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Activity_During_ERstress_forR.xlsx"), sheet = 3),
+    P_BfA24hr = read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Activity_During_ERstress_forR.xlsx"), sheet = 4),
+    Autophagy = read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Activity_During_ERstress_forR.xlsx"), sheet = 5),
+    Autophagy_BfA6hr = read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Activity_During_ERstress_forR.xlsx"), sheet = 6),
+    Autophagy_BfA24hr = read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Activity_During_ERstress_forR.xlsx"), sheet = 7),
+    Autophagy_MG132 = read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Activity_During_ERstress_forR.xlsx"), sheet = 8)
+  )
+
+# Add plot titles to dataframes
+names(datasets) <- c(
+  "Proteasome Activity during ER stress", 
+  "Proteasome Inhibition during Early ER stress", 
+  "Proteasome Activity under Autophagy Inhibition during Early ER stress", 
+  "Proteasome Activity under Autophagy Inhibition during Late ER stress", 
+  "Autophagy Activity during ER stress", 
+  "Autophagy Inhibition during Early ER stress", 
+  "Autophagy Inhibition during Late ER stress", 
+  "Autophagy Activity under Proteasome Inhibition during Early ER stress")
+
+# Format
+plots <- lapply(seq_along(datasets), function(i) {
+  
+  df <- datasets[[i]]
+  title <- names(datasets)[i]
+  x_col <- names(df)[1]
+  
+  # Factor for x-axis order
+  df[[x_col]] <- factor(df[[x_col]], levels = unique(df[[x_col]]))
+  
+  # Pivot longer for plotting
+  df_long <- df %>%
+    pivot_longer(cols = 2:ncol(df), names_to = "Replicate", values_to = "Value")
+  
+  # Compute mean per time point
+  means_df <- df_long %>%
+    group_by(!!sym(x_col)) %>%
+    summarise(mean_val = mean(Value, na.rm = TRUE), .groups = "drop")
+  
+  # Define comparisons vs baseline
+  baseline <- levels(df[[x_col]])[1]
+  comparisons <- levels(df[[x_col]])[-1]
+  
+  # Compute p-values and convert to stars
+  sig_df <- data.frame()
+  for(tp in comparisons) {
+  test_vals <- df_long %>% filter(!!sym(x_col) == tp) %>% pull(Value)
+  ref_vals <- df_long %>% filter(!!sym(x_col) == baseline) %>% pull(Value)
+  pval <- t.test(test_vals, ref_vals)$p.value
+  pval_4 <- round(pval, 4)
+  # Convert p-value to stars
+  stars <- if (pval < 0.001) {
+  "***"
+  } else if (pval < 0.01) {
+  "**"
+  } else if (pval < 0.05) {
+  "*"
+  } else {
+  "ns"
+  }
+  # y-position above max value
+  y_pos <- max(c(test_vals, ref_vals), na.rm = TRUE) + 0.1
+  sig_df <- rbind(sig_df, data.frame(
+  Condition = tp,
+  stars = stars,
+  pval_4 = pval_4,
+  y_pos = y_pos
+  ))
+  }
+  
+  # Plot
+  ggplot(df_long, aes(x = !!sym(x_col), y = Value)) +
+    geom_jitter(width = 0.1, size = 2, alpha = 0.7, color = "black") +
+    geom_segment(
+      data = means_df,
+      aes(
+        x = as.numeric(!!sym(x_col)) - 0.25,
+        xend = as.numeric(!!sym(x_col)) + 0.25,
+        y = mean_val,
+        yend = mean_val
+      ),
+      inherit.aes = FALSE,
+      color = "black",
+      linewidth = 1
+    ) +
+    geom_text(
+      data = sig_df,
+      aes(x = Condition, y = y_pos, label = pval_4),
+      inherit.aes = FALSE,
+      size = 4
+    ) +
+    ylim(0, 2) +
+    labs(x = x_col, y = "Value", title = title) +
+    theme_classic(base_size = 12) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.grid.major = element_line(color = "gray80", linewidth = 0.5),
+      panel.grid.minor = element_blank(),
+      axis.line = element_line(color = "black"),
+      axis.ticks = element_line(color = "black")
+    )
+})
+
+
+# Save all plots to PDF
+pdf("../Figs/Activity_assays2_pnum.pdf", width = 7, height = 5)
+for (p in plots) {
+  print(p)
+}
+dev.off()
+
+
