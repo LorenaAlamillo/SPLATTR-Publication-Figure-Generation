@@ -1,0 +1,92 @@
+library(readxl)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(ggbeeswarm)
+library(ggpubr)
+
+# Download data
+xtt <- read_excel(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "XTT_ERphagy_constructs_4hr_read_formatted.xlsx"), sheet = 1)
+
+# Make data sets
+norm_to_control <- xtt %>%
+  mutate(control_avg = mean(KDEL_C))  %>%
+  mutate(across(ends_with("_C"), ~ .x / control_avg)) %>%
+  dplyr::select(ends_with("_C")) %>%
+  rename_with(~ str_replace(.x, "_C$", ""))
+
+norm_to_thaps <- xtt %>%
+  mutate(thaps_avg = mean(KDEL_T))  %>%
+  mutate(across(ends_with("_T"), ~ .x / thaps_avg)) %>%
+  dplyr::select(ends_with("_T")) %>%
+  rename_with(~ str_replace(.x, "_T$", ""))
+
+ratios <- xtt %>%
+  mutate(
+    across(
+      ends_with("_T"),
+      ~ .x / xtt[[str_replace(cur_column(), "_T$", "_C")]],
+      .names = "{.col}_ratio")) %>%
+  select(ends_with("_ratio")) %>%
+  rename_with(~ str_replace(.x, "_T_ratio$", ""))
+
+df_list <- list(ratios = ratios, norm_to_control = norm_to_control, norm_to_thaps = norm_to_thaps) 
+
+# Format
+condition_levels <- c("KDEL", "CYB", "FAMC", "TEX", "CCPG") #"FAMA", "FAMB",
+
+condition_colors <- c(
+  KDEL = "red3", 
+  CYB = "turquoise3", 
+  TEX = "darkorchid4",
+  CCPG = "maroon2",
+ # FAMA = "green4",
+#  FAMB = "navy",
+  FAMC = "darkorange2"
+)
+
+comparisons <- lapply(condition_levels[-1], function(x) c("KDEL", x))
+
+# Plot
+pdf("../Figs/ERphagy_constructs_XTT_shortened.pdf", width = 7, height = 5)
+plots <- lapply(names(df_list), function(nm) {
+
+  df_long <- df_list[[nm]] %>%
+    pivot_longer(cols = everything(),
+                 names_to = "condition",
+                 values_to = "value")
+
+  df_long$condition <- factor(df_long$condition, levels = condition_levels)
+
+  mean_df <- df_long %>%
+    group_by(condition) %>%
+    summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+
+  mean_df$condition <- factor(mean_df$condition, levels = condition_levels)
+
+  ggplot(df_long, aes(x = condition, y = value, color = condition)) +
+    geom_beeswarm() +
+    geom_crossbar(
+      data = mean_df,
+      aes(x = condition, y = mean_value, ymin = mean_value, ymax = mean_value),
+      width = 0.5,
+      inherit.aes = FALSE
+    ) +
+    stat_compare_means(
+    comparisons = comparisons,
+    method = "t.test",
+    label = "p.signif"
+    ) +
+    scale_color_manual(values = condition_colors, drop = FALSE) +
+    ggtitle(nm) +
+    theme_classic()
+})
+plots
+dev.off()
+
+
+
+
+
+
