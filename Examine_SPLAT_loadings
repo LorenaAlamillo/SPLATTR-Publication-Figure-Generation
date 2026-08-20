@@ -1,0 +1,154 @@
+library(readr)
+library(MSnbase)
+library(pRoloc)
+library(bandle)
+
+# Download data
+data_dir <- "/Volumes/Omics-Shared/Lorena/SPLATTR_misc/20221010_LOPIT_Analysis/processed"
+bandleres <- readRDS(file=file.path(data_dir, "30c_R1_THPS_TrainedBandle_ColSum_2pep_v2.Rds")) # "30_R1_THPS_TrainedBandle.Rds"
+tmt_df <- readr::read_tsv(file.path(data_dir, "29b_R1_cleaned_data_nnls_colsumnorm_2pep.txt"))
+markers_lopit_reduced <- readRDS(file.path(data_dir, "38a_R1_lopit_curated_750iter_All_v2.Rds"))
+
+# Process bandle
+bandleres <- bandleProcess(bandleres)
+# Length of 2, one for control and one for thapsigargin
+length(summaries(bandleres))
+pe1 <- posteriorEstimates(summaries(bandleres)[[1]])
+pe2 <- posteriorEstimates(summaries(bandleres)[[2]])
+
+# MSN
+# Remove non-unique proteins, then extract UniProt
+tmt_df <- tmt_df |>
+  dplyr::filter(stringr::str_count(rowname, ",") == 0) |>
+  dplyr::mutate(rowname = gsub("sp\\|(.+?)\\|.*", "\\1", rowname))
+
+# Control R1
+ctrl_r1_msn <- MSnbase::readMSnSet2(file=tmt_df |> dplyr::select(rowname, paste0("CT_F", 1:10, "R1")),
+                                    ecol = paste0("CT_F", 1:10, "R1"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |> 
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers_lopit_reduced, verbose=F)
+
+# Control R2
+ctrl_r2_msn <- MSnbase::readMSnSet2(file=tmt_df |> dplyr::select(rowname, paste0("CT_F", 1:10, "R2")),
+                                    ecol = paste0("CT_F", 1:10, "R2"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers_lopit_reduced, verbose=F)
+
+# Control R3
+ctrl_r3_msn <- MSnbase::readMSnSet2(file=tmt_df |> dplyr::select(rowname, paste0("CT_F", 1:10, "R3")),
+                                    ecol = paste0("CT_F", 1:10, "R3"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers_lopit_reduced, verbose=F)
+
+# Thapsigargin R1
+thps_r1_msn <- MSnbase::readMSnSet2(file=tmt_df |> dplyr::select(rowname, paste0("TH_F", 1:10, "R1")),
+                                    ecol = paste0("TH_F", 1:10, "R1"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |> 
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers_lopit_reduced, verbose=F)
+
+# Thapsigargin R2
+thps_r2_msn <- MSnbase::readMSnSet2(file=tmt_df |> dplyr::select(rowname, paste0("TH_F", 1:10, "R2")),
+                                    ecol = paste0("TH_F", 1:10, "R2"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers_lopit_reduced, verbose=F)
+
+# Thapsigargin R3
+thps_r3_msn <- MSnbase::readMSnSet2(file=tmt_df |> dplyr::select(rowname, paste0("TH_F", 1:10, "R3")),
+                                    ecol = paste0("TH_F", 1:10, "R3"),
+                                    fnames="rowname") |>
+  MSnbase::normalize(method="sum") |>
+  MSnbase::filterZero() |>
+  pRoloc::addMarkers(markers_lopit_reduced, verbose=F)
+
+# Join into an MSn list
+comp_list <- MSnbase::commonFeatureNames(c(ctrl_r1_msn, ctrl_r2_msn, ctrl_r3_msn, thps_r1_msn, thps_r2_msn, thps_r3_msn))
+
+control <- list(comp_list[[1]], comp_list[[2]], comp_list[[3]])
+thapsigargin <- list(comp_list[[4]], comp_list[[5]], comp_list[[6]])
+
+xx <- bandlePredict(control, 
+                    thapsigargin, 
+                    params = bandleres, 
+                    fcol = "markers")
+res_ctrl <- xx[[1]]
+res_thps <- xx[[2]]
+
+res_ctrl[[1]] <- getPredictions(res_ctrl[[1]], 
+                              fcol = "bandle.allocation",  
+                              scol = "bandle.probability",    
+                              mcol = "markers", 
+                              t = .95)
+
+res_thps[[1]] <- getPredictions(res_thps[[1]], 
+                               fcol = "bandle.allocation",
+                               scol = "bandle.probability", 
+                               mcol = "markers",      
+                               t = .9)
+
+## add outlier probability
+fData(res_ctrl[[1]])$bandle.outlier.t <- 1 -  fData(res_ctrl[[1]])$bandle.outlier
+fData(res_thps[[1]])$bandle.outlier.t <- 1 -  fData(res_thps[[1]])$bandle.outlier
+
+outlier_thresh <- c(rep(.95, 13))
+names(outlier_thresh) <- sort(unique(fData(res_ctrl[[1]])$markers))
+
+## threshold again, now on the outlier probability
+res_ctrl[[1]] <- getPredictions(res_ctrl[[1]],
+                              fcol = "bandle.allocation.pred",
+                              scol = "bandle.outlier.t",
+                              mcol = "markers",
+                              t = .95)
+
+res_thps[[1]] <- getPredictions(res_thps[[1]],
+                               fcol = "bandle.allocation.pred",
+                               scol = "bandle.outlier.t",
+                               mcol = "markers",
+                               t = .5)
+
+res_alloc_ctrl <- fData(res_ctrl[[1]])$bandle.allocation.pred.pred
+fData(res_ctrl[[2]])$bandle.allocation.pred.pred <- res_alloc_ctrl
+fData(res_ctrl[[3]])$bandle.allocation.pred.pred <- res_alloc_ctrl
+
+## Add results to second and third replicates
+res_alloc_thps <- fData(res_thps[[1]])$bandle.allocation.pred.pred
+fData(res_thps[[2]])$bandle.allocation.pred.pred <- res_alloc_thps
+fData(res_thps[[3]])$bandle.allocation.pred.pred <- res_alloc_thps
+
+# Perform PCA and visualize loadings rep 1
+pca_fromPRComp <- res_ctrl[[1]] |> exprs() |> prcomp(scale = T, center = T) 
+#Look at loadings - loadings represent contribution of fractions to principal components
+loadings_matrix <- pca_fromPRComp$rotation
+plot(loadings_matrix[, 1], loadings_matrix[, 2], pch = 16, col = "black", main = "PC1 vs PC2 Loadings", xlab = "PC1 Loadings", ylab = "PC2 Loadings")
+abline(v = 0, col = "black") #add a horizontal line at y = 0
+abline(h = 0, col = "black") #add a horizontal line at x = 0
+text(loadings_matrix[, 1], loadings_matrix[, 2], legend = rownames(loadings_matrix), pos = 2, cex = 0.8, col = "black") # Label specific points with sample names
+
+# Perform PCA and visualize loadings rep 2
+pca_fromPRComp2 <- res_ctrl[[2]] |> exprs() |> prcomp(scale = T, center = T) 
+#Look at loadings - loadings represent contribution of fractions to principal components 
+loadings_matrix2 <- pca_fromPRComp2$rotation
+plot(loadings_matrix2[, 1], loadings_matrix2[, 2], pch = 16, col = "black", main = "PC1 vs PC2 Loadings", xlab = "PC1 Loadings", ylab = "PC2 Loadings")
+abline(v = 0, col = "black") #add a horizontal line at y = 0
+abline(h = 0, col = "black") #add a horizontal line at x = 0
+text(loadings_matrix2[, 1], loadings_matrix2[, 2], legend = rownames(loadings_matrix), pos = 2, cex = 0.8, col = "black") # Label specific points with sample names
+
+# Perform PCA and visualize loadings rep 3
+pca_fromPRComp3 <- res_ctrl[[3]] |> exprs() |> prcomp(scale = T, center = T) 
+#Look at loadings - loadings represent contribution of fractions to principal components 
+loadings_matrix3 <- pca_fromPRComp3$rotation
+plot(loadings_matrix3[, 1], loadings_matrix3[, 2], pch = 16, col = "black", main = "PC1 vs PC2 Loadings", xlab = "PC1 Loadings", ylab = "PC2 Loadings")
+abline(v = 0, col = "black") #add a horizontal line at y = 0
+abline(h = 0, col = "black") #add a horizontal line at x = 0
+text(loadings_matrix3[, 1], loadings_matrix3[, 2], legend = rownames(loadings_matrix), pos = 2, cex = 0.8, col = "black") # Label specific points with sample names
+
+
