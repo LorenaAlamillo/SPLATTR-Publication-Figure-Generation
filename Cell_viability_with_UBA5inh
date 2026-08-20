@@ -1,0 +1,91 @@
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+# Read data
+viability <- read_tsv(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "resazurin_thaps_uba5inh_5hr_read.txt"))
+viability_cont <- read_tsv(file.path("/Volumes/Omics-Shared/Lorena/Activity_Assays" , "Resazurin_DMSO_UBA5_control_5hr_read.txt"))
+
+# Select data
+viability2 <- viability %>% dplyr::select(11:14)
+viability_cont2 <- viability_cont %>% dplyr::select(3:5)
+
+# Add column names
+colnames(viability2) <- c(
+"DMSO", "Thaps", "Thaps_10UBA5inh", "Thaps_50UBA5inh"
+) 
+colnames(viability_cont2) <- c(
+"DMSO", "10UBA5inh", "50UBA5inh"
+) 
+
+#DMSO avg
+viability3 <- viability2 %>% mutate(DMSO_avg = mean(DMSO))
+viability_cont3 <- viability_cont2 %>% mutate(DMSO_avg = mean(DMSO))
+
+# Compute value over DMSO avg
+viability4 <- viability3 %>% mutate(Thaps_norm = Thaps / DMSO_avg, Thaps_10UBA5inh_norm = Thaps_10UBA5inh / DMSO_avg, Thaps_50UBA5inh_norm = Thaps_50UBA5inh / DMSO_avg) %>% dplyr::select(Thaps_norm, Thaps_10UBA5inh_norm, Thaps_50UBA5inh_norm)
+viability_cont4 <- viability_cont3 %>% mutate(DMSO_norm = DMSO / DMSO_avg, , `10UBA5inh_norm` = `10UBA5inh` / DMSO_avg, `50UBA5inh_norm` = `50UBA5inh` / DMSO_avg) %>% dplyr::select(DMSO_norm, `10UBA5inh_norm`, `50UBA5inh_norm`)
+
+# Merge
+viability5 <- cbind(viability4, viability_cont4)
+viability5
+
+# Make long
+viab_long <- viability5 %>%
+dplyr::select(DMSO_norm, Thaps_norm, `10UBA5inh_norm`, `50UBA5inh_norm`, Thaps_10UBA5inh_norm, Thaps_50UBA5inh_norm) %>%
+tidyr::pivot_longer(
+cols = everything(),
+names_to = "condition",
+values_to = "viability"
+)
+
+# Add levels and get means
+viab_long <- viab_long %>%
+dplyr::mutate(
+condition = factor(condition,
+levels = c("DMSO_norm", "10UBA5inh_norm", "50UBA5inh_norm", "Thaps_norm", "Thaps_10UBA5inh_norm", "Thaps_50UBA5inh_norm"))
+)
+means_df <- viab_long %>%
+  dplyr::group_by(condition) %>%
+  dplyr::summarise(mean_viab = mean(viability, na.rm = TRUE), .groups = "drop")
+
+# Plot points and mean
+pdf("../Figs/CellViability.pdf", width = 7, height = 5)
+p <- ggplot(viab_long, aes(x = condition, y = viability, color = condition)) +
+  geom_jitter(width = 0.1, size = 2, alpha = 0.7) +
+  geom_segment(
+    data = means_df,
+    aes(
+      x = as.numeric(factor(condition)) - 0.25,
+      xend = as.numeric(factor(condition)) + 0.25,
+      y = mean_viab,
+      yend = mean_viab,
+      color = condition
+    ),
+    inherit.aes = FALSE,
+    linewidth = 1
+  ) +
+  theme_classic() +
+  labs(y = "Flourescence / DMSO", x = NULL) +
+  scale_color_manual(values = c(
+  DMSO_norm = "black",
+  `10UBA5inh_norm` = "purple3",
+  `50UBA5inh_norm` = "purple4",
+  Thaps_norm = "red3",
+  Thaps_50UBA5inh_norm = "blue3",
+  Thaps_10UBA5inh_norm = "cornflowerblue"
+  )) +
+stat_compare_means(
+comparisons = list(
+c("DMSO_norm", "10UBA5inh_norm"),
+c("DMSO_norm", "50UBA5inh_norm"),
+c("Thaps_norm", "Thaps_10UBA5inh_norm"),
+c("Thaps_norm", "Thaps_50UBA5inh_norm")
+),
+method = "t.test",
+label = "p.signif"
+)
+p
+dev.off()
+
