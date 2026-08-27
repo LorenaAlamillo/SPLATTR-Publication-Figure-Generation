@@ -1,0 +1,366 @@
+library(tidyr)
+library(dplyr)
+library(readxl)
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(ggpubr)
+library(effectsize)
+library(car)
+library(patchwork)
+
+# Read file and format
+raw <- read_excel("Mito Stress Test.xlsx",
+                  col_names = FALSE)
+groups <- as.character(unlist(raw[1, ]))
+wells  <- as.character(unlist(raw[2, ]))
+
+colnames(raw) <- c(
+  "Time",
+  paste(groups[-1], wells[-1], sep = "_"))
+
+raw <- raw[-c(1,2), ]
+raw$Time <- as.numeric(raw$Time)
+
+raw[-1] <- lapply(raw[-1], as.numeric)
+mito <- raw %>%
+  pivot_longer(
+    -Time,
+    names_to = "Sample",
+    values_to = "OCR")
+mito <- mito %>%
+  separate(
+    Sample,
+    into = c("Timepoint",
+             "Treatment",
+             "Well"),
+    sep = "_")
+
+# Make variable factors
+mito$Treatment <- factor(mito$Treatment)
+
+mito$Timepoint <- factor(
+  mito$Timepoint,
+  levels=c("0.5","1","2","4","16","24"))
+
+mito$Well <- factor(mito$Well)
+
+# Measurement number
+mito <- mito %>%
+  group_by(Well) %>%
+  mutate(
+    Measurement = row_number()) %>%
+  ungroup()
+mito <- mito %>%
+  mutate(
+    Phase = case_when(
+      Measurement %in% 1:3 ~ "Baseline",
+      Measurement %in% 4:6 ~ "Oligomycin",
+      Measurement %in% 7:9 ~ "FCCP",
+      Measurement %in% 10:12 ~ "RotAA"))
+
+mito$Phase <- factor(
+  mito$Phase,
+  levels=c(
+    "Baseline",
+    "Oligomycin",
+    "FCCP",
+    "RotAA"))
+
+# Control across all timepoint
+# Duplicate Control data across all Timepoint facets
+control_all <- mito %>%
+  filter(Treatment == "Control") %>%
+  select(-Timepoint) %>%   # remove original Timepoint
+  crossing(Timepoint = unique(mito$Timepoint))
+
+# Keep non-Control data as normal
+other <- mito %>%
+  filter(Treatment != "Control")
+
+# Combine
+plot_data <- bind_rows(other, control_all)
+
+p <- ggplot(
+  plot_data,
+  aes(
+    Time,
+    OCR,
+    group = Well,
+    colour = Treatment)) +
+  geom_line(alpha = 1) +
+  facet_wrap(~Timepoint) +
+  scale_colour_manual(
+    values = c(
+      "Control" = "black",
+      "Thapsigargin" = "red3")) +
+  theme_classic()
+
+ggsave(
+  filename = file.path("OCR_by_Timepoint.pdf"),
+  plot = p,
+  width = 11,
+  height = 8)
+
+# Average triplicate measurements
+phase_means <-
+mito %>%
+group_by(
+Well,
+Treatment,
+Timepoint,
+Phase
+) %>%
+summarise(
+MeanOCR=mean(OCR),
+SD=sd(OCR),
+CV=100*SD/MeanOCR,
+.groups="drop")
+
+# Make new dataframe for stats - comparing thaps timepoints to pooled control
+mito_stats <- phase_means %>%
+  mutate(
+    Group = case_when(
+      Treatment == "Control" ~ "Control_all",
+      Treatment == "Thaps" ~ paste(Treatment, Timepoint, sep = "_"),
+      TRUE ~ NA_character_)) %>%
+  filter(!is.na(Group))
+
+# Make format better
+params <-
+phase_means %>%
+
+select(
+Well,
+Treatment,
+Timepoint,
+Phase,
+MeanOCR) %>%
+
+pivot_wider(
+names_from=Phase,
+values_from=MeanOCR)
+
+# Info derived from OCR - add Groups to compare each thaps tp to all controls
+params <-
+params %>%
+mutate(
+NonMito =
+RotAA,
+Basal =
+Baseline-RotAA,
+ATP=
+Baseline-Oligomycin,
+ProtonLeak=
+Oligomycin-RotAA,
+Maximal=
+FCCP-RotAA,
+Spare=
+Maximal-Basal,
+Coupling=
+100*(ATP/Basal))
+
+params <- params %>%
+  mutate(
+    Group = ifelse(Treatment == "Control",
+                   "Control_all",
+                   paste(Treatment, Timepoint, sep = "_")))
+
+# Begin stats
+parameters <- c(
+  "Basal",
+  "ATP",
+  "ProtonLeak",
+  "Maximal",
+  "Spare",
+  "Coupling")
+
+results <- list()
+
+for (p in parameters) {
+
+  formula <- as.formula(
+    paste(p, "~ Treatment * Timepoint"))
+
+  model <- lm(formula, data = params)
+
+  results[[p]] <- list(
+    model = model,
+    anova = Anova(model, type = 3),
+    eta2 = eta_squared(model),
+    emmeans = emmeans(
+      model,
+      pairwise ~ Treatment | Timepoint,
+      adjust = "holm"))}
+
+# Convert to long for plotting
+params_long <- params %>%
+  pivot_longer(
+    cols = c(Basal, ATP, ProtonLeak, Maximal, Spare, Coupling),
+    names_to = "Parameter",
+    values_to = "Value")
+
+# List of different thaps timepoints
+comparison_list <- params_long %>%
+  filter(Group != "Control_all") %>%
+  pull(Group) %>%
+  unique()
+
+comparison_list <- comparison_list[
+  order(as.numeric(sub("Thapsigargin_", "", comparison_list)))]
+
+# Plotting and stats
+parameter_limits <- params_long %>%
+  group_by(Parameter) %>%
+  summarise(
+    ymin = 0,
+    ymax = max(Value + sd(Value, na.rm = TRUE), na.rm = TRUE) * 1.2,
+    .groups = "drop")
+
+parameter_limits2 <- params_long %>%
+  group_by(Parameter) %>%
+  summarise(
+    ymin = min(Value - sd(Value, na.rm = TRUE), na.rm = TRUE),
+    ymax = max(Value + sd(Value, na.rm = TRUE), na.rm = TRUE),
+    .groups = "drop")
+
+plot_comparison <- function(parameter, comparison_group, y_limits){
+
+  df <- params_long %>%
+    filter(
+      Parameter == parameter,
+      Group %in% c("Control_all", comparison_group))
+
+  model <- lm(Value ~ Group, data = df)
+
+  sig <- emmeans(
+    model,
+    pairwise ~ Group,
+    adjust = "holm"
+  )$contrasts %>%
+    as.data.frame() %>%
+    mutate(
+      stars = case_when(
+        p.value < 0.0001 ~ "****",
+        p.value < 0.001 ~ "***",
+        p.value < 0.01 ~ "**",
+        p.value < 0.05 ~ "*",
+        TRUE ~ "ns"))
+
+  summary_df <- df %>%
+    group_by(Group) %>%
+    summarise(
+      mean = mean(Value, na.rm = TRUE),
+      sem = sd(Value, na.rm = TRUE)/sqrt(n()),
+      .groups = "drop")
+
+  y_pos <- y_limits[2] * 0.95
+
+  ggplot(summary_df,
+         aes(Group, mean, fill = Group)) +
+
+    geom_col(
+      width = .6,
+      color = "black") +
+
+    geom_errorbar(
+      aes(
+        ymin = mean-sem,
+        ymax = mean+sem),
+      width = .2) +
+
+    geom_text(
+      aes(
+        x = 1.5,
+        y = y_pos,
+        label = sig$stars[1]),
+      inherit.aes = FALSE,
+      size = 6) +
+    scale_fill_manual(
+    values = c(
+      Control_all = "black",
+      Thapsigargin_0.5 = "red3",
+      Thapsigargin_1 = "red3",
+      Thapsigargin_2 = "red3",
+      Thapsigargin_4 = "red3",
+      Thapsigargin_16 = "red3",
+      Thapsigargin_24 = "red3")) +
+    scale_y_continuous(
+      limits = y_limits) +
+
+    theme_classic(base_size = 14) +
+
+    labs(
+      title = comparison_group,
+      x = NULL,
+      y = parameter) +
+    theme(
+      legend.position = "none")}
+
+# Plot all parameters and thaps conditions
+parameters <- c(
+  "Basal",
+  "ATP",
+  "ProtonLeak",
+  "Maximal",
+  "Spare",
+  "Coupling")
+
+parameter_pages <- list()
+
+for (param in parameters) {
+  limits <- parameter_limits %>%
+    filter(Parameter == param) %>%
+    select(ymin, ymax) %>%
+    as.numeric()
+  plots <- lapply(
+    comparison_list,
+    function(comp){
+      plot_comparison(
+        param,
+        comp,
+        limits)})
+  parameter_pages[[param]] <- wrap_plots(
+    plots,
+    ncol = 3) +
+    plot_annotation(
+      title = param)}
+
+for (param in names(parameter_pages)) {
+  ggsave(
+    filename = paste0(param, "_comparisons.pdf"),
+    plot = parameter_pages[[param]],
+    width = 10,
+    height = 6)}
+
+Plot rest of parameters and thaps conditions
+parameters <- c(
+  "Spare")
+
+parameter_pages <- list()
+
+for (param in parameters) {
+  limits <- parameter_limits2 %>%
+    filter(Parameter == param) %>%
+    select(ymin, ymax) %>%
+    as.numeric()
+  plots <- lapply(
+    comparison_list,
+    function(comp){
+      plot_comparison(
+        param,
+        comp,
+        limits)})
+  parameter_pages[[param]] <- wrap_plots(
+    plots,
+    ncol = 3) +
+    plot_annotation(
+      title = param)}
+
+for (param in names(parameter_pages)) {
+  ggsave(
+    filename = paste0(param, "_comparisons.pdf"),
+    plot = parameter_pages[[param]],
+    width = 10,
+    height = 6)}
