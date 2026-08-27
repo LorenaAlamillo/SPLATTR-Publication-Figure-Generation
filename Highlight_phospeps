@@ -1,0 +1,259 @@
+library(MSnbase)
+library(pRoloc)
+library(bandle)
+library(tidyverse)
+library(ggfortify)
+library(ggplot2)
+library(ggrepel)
+
+# Get nonphos MSNs with bandle
+bandles <- list(
+  hr1 = readRDS(file=file.path("../processed", "14_avgmsn_bandle_1hr.Rds")),
+  hr4 = readRDS(file=file.path("../processed", "14_avgmsn_bandle_4hr.Rds")),
+  hr16 = readRDS(file=file.path("../processed", "14_avgmsn_bandle_16hr.Rds")),
+  hr24 = readRDS(file=file.path("../processed", "14_avgmsn_bandle_24hr.Rds")))
+
+# Get phos MSN
+phosMSN <- list(
+  hr1 = readRDS(file=file.path("../processed", "45_phos_avgmsn_1hr.Rds")),
+  hr4 = readRDS(file=file.path("../processed", "45_phos_avgmsn_4hr.Rds")),
+  hr16 = readRDS(file=file.path("../processed", "45_phos_avgmsn_16hr.Rds")),
+  hr24 = readRDS(file=file.path("../processed", "45_phos_avgmsn_24hr.Rds")))
+
+# Get dataframes
+# For nonphos
+nonphos <- lapply(names(bandles), function(hr) {
+  control_df <- as.data.frame(exprs(bandles[[hr]]$control_full))
+  thps_df    <- as.data.frame(exprs(bandles[[hr]]$thps_full))
+  thps_df <- rownames_to_column(thps_df, var = "rowname")
+  control_df <- rownames_to_column(control_df, var = "rowname")
+  
+  list(
+    control = control_df,
+    thps    = thps_df)})
+
+names(nonphos) <- names(bandles)
+
+# For phos
+phospeps <- lapply(names(phosMSN), function(hr) {
+
+  obj <- phosMSN[[hr]]@x
+  # Extract all conditions inside hr
+  cond_names <- names(obj)
+  cond_list <- lapply(cond_names, function(cond) {
+    df <- as.data.frame(exprs(obj[[cond]]))
+    df <- rownames_to_column(df, var = "rowname")})
+
+names(cond_list) <- cond_names})
+names(phospeps) <- names(phosMSN)
+
+# Make list of allocations with rownames
+allocations_list <- list()
+for (hr in names(bandles)) {
+  ctrl <- bandles[[hr]]$control_full
+  thps <- bandles[[hr]]$thps_full
+  allocations_list[[hr]] <- list(
+    control = data.frame(
+      rowname = rownames(ctrl),
+      allocation = fData(ctrl)$bandle.allocation.pred.pred),
+
+    thps = data.frame(
+      rowname = rownames(thps),
+      allocation = fData(thps)$bandle.allocation.pred.pred))}
+
+# Get rownames for phos
+phos_proteins <- list()
+for (hr in names(phospeps)) {
+  obj <- phospeps[[hr]]
+  ctrl_name <- grep("^C_", names(obj), value = TRUE)
+  df <- obj[[ctrl_name]]
+  phos_proteins[[hr]] <- data.frame(
+    rowname = df[[1]],   # adjust if needed
+    allocation = "phos")}
+
+# Bind dataframes
+merged_allocations_ctrl <- list()
+for (hr in names(allocations_list)) {
+  merged_allocations_ctrl[[hr]] <- dplyr::bind_rows(
+    allocations_list[[hr]]$control,
+    phos_proteins[[hr]])}
+merged_allocations_thps <- list()
+for (hr in names(allocations_list)) {
+  merged_allocations_thps[[hr]] <- dplyr::bind_rows(
+    allocations_list[[hr]]$thps,
+    phos_proteins[[hr]])}
+
+merged_data <- list()
+for (hr in names(nonphos)) {
+  # -------------------------
+  # NONPHOS
+  # -------------------------
+  nonphos_C <- nonphos[[hr]]$control
+  nonphos_T <- nonphos[[hr]]$thps
+  # -------------------------
+  # PHOS (pattern matched)
+  # -------------------------
+  phos_obj <- phospeps[[hr]]
+  phos_C <- phos_obj[[grep("^C_", names(phos_obj), value = TRUE)[1]]]
+  phos_T <- phos_obj[[grep("^T_", names(phos_obj), value = TRUE)[1]]]
+  # -------------------------
+  # BIND WITHIN CONDITION
+  # -------------------------
+  merged_data[[hr]] <- list(
+    C = dplyr::bind_rows(nonphos_C, phos_C),
+    T = dplyr::bind_rows(nonphos_T, phos_T))}
+
+# Make first column rownames
+merged_data <- lapply(merged_data, function(hr_list) {
+
+  for (cond in c("C", "T")) {
+
+    hr_list[[cond]] <- tibble::column_to_rownames(
+      hr_list[[cond]],
+      var = "rowname")}})
+
+# Prepare to plot
+# Assign location colors
+alloc_colors <- c(
+  "unknown" = "#D3D3D325",
+  "Mito/Chrom" = "#FFD70090",
+  "ER" = "#377EB890",
+  "GA" = "#309C1790",
+  "PM" = "#F781BF90",
+  "Lysosome" = "#FF7F0090",
+  "Peroxisome" = "#A6562890",
+  "Cytosol" = "#E31A1C90", 
+  "Nucleus" = "#00CED190",
+  "Proteasome" = "#984EA390",
+  "Ribosome" = "#9ACD3290",
+  "phos" = "#3c3c3c80")
+
+# Label maps and highlighted proteins swapped for each timepoint
+label_map1hr <- c(
+  "Q8IYB3_T872,S874" = "T872,S874",
+  "Q8IYB3_T572,T574" = "T572,T574",
+  "Q8IYB3_S429,S431" = "S429,S431",
+  "Q8IYB3_T581,S583" = "T581,S583",
+  "Q8IYB3_S549,S551" = "S549,S551",
+  "Q8IYB3_S683,S685" = "S683,S685",
+  "Q8IYB3_S665" = "S665",
+  "Q8IYB3" = "SRRM1")
+
+label_map4hr <- c(
+  "O00264_H" = "PGRMC1_H",
+  "O00264_S181_H" = "PGRMC1_S181_H",
+  "Q86Y82" = "STX12",
+  "Q86Y82_S139,S142" = "STX12_S139,S142")
+
+label_map16hr <- c(
+  "O94874_S458" = "UFL1_S458",
+  "O94874" = "UFL1",
+  "Q8NE71_S22" = "ABCF1_S22",
+  "Q8NE71_S109" = "ABCF1_S109",
+  "Q8NE71_S105,S109" = "ABCF1_S105,S109",
+  "Q8NE71_S105,T108,S109" = "ABCF1_S105,T108,S109",
+  "Q8NE71" = "ABCF1")
+
+label_map24hr <- c(
+  "P27824_S564" = "CANX_S564",
+  "P43307_S284" = "SSR1_S284",
+  "Q9H3N1_S247" = "TMX1_S247",
+  "P27824" = "CANX",
+  "P43307" = "SSR1",
+  "Q9H3N1" = "TMX1")
+
+
+# Open PDF device
+pdf(file.path("../figs", "46_Highlight_phosloc_thaps24hr.pdf"), width = 11, height = 8)
+pca_plots <- list()
+
+highlight_proteins <- c("P27824_S564", "P43307_S284", "Q9H3N1_S247", "P27824", "P43307", "Q9H3N1")
+
+label_map <- c(
+  "P27824_S564" = "CANX_S564",
+  "P43307_S284" = "SSR1_S284",
+  "Q9H3N1_S247" = "TMX1_S247",
+  "P27824" = "CANX",
+  "P43307" = "SSR1",
+  "Q9H3N1" = "TMX1")
+
+for (hr in names(merged_data)) {
+
+  expr <- merged_data[[hr]]$T
+
+  # PCA
+  pca_result <- prcomp(expr, scale. = TRUE)
+
+  # mirror selected timepoints
+  if (hr %in% c("hr1")) {
+    pca_result$x[, 1] <- -pca_result$x[, 1]
+    pca_result$x[, 2] <- -pca_result$x[, 2]}
+
+  if (hr %in% c("hr4")) {
+    pca_result$x[, 2] <- -pca_result$x[, 2]}
+  
+    if (hr %in% c("hr16")) {
+    pca_result$x[, 1] <- -pca_result$x[, 1]}
+
+  # metadata
+  meta <- merged_allocations_thps[[hr]]
+  rownames(meta) <- meta$rowname
+
+  # Keep only shared rows
+  common <- intersect(rownames(pca_result$x), rownames(meta))
+
+  df_plot <- data.frame(pca_result$x[common, 1:2])
+  df_plot$allocation <- meta[common, "allocation"]
+
+  # add protein IDs
+  df_plot$protein <- rownames(df_plot)
+  df_plot$label <- label_map[df_plot$protein]
+
+  # highlight flag
+  df_plot$highlight <- ifelse(df_plot$protein %in% highlight_proteins,
+                              "highlight", "normal")
+
+  # base plot (all proteins colored by allocation)
+  p <- ggplot(df_plot, aes(PC1, PC2)) +
+
+    geom_point(aes(color = allocation, size = allocation), alpha = 0.7) +
+
+    # highlight overlay
+    geom_point(
+      data = subset(df_plot, highlight == "highlight"),
+      aes(PC1, PC2),
+      color = "black",
+      size = 3,
+      shape = 3,
+      stroke = 1.2) +
+    
+    geom_text_repel(
+      data = subset(df_plot, highlight == "highlight" & !is.na(label)),
+      aes(PC1, PC2, label = label),
+      size = 3,
+      color = "black",
+      max.overlaps = Inf) +
+
+    scale_size_manual(values = c(
+      "unknown" = 1.5,
+      "phos" = 0.8,
+      "ER" = 1.8,
+      "GA" = 1.8,
+      "PM" = 1.8,
+      "Cytosol" = 1.8,
+      "Nucleus" = 1.8,
+      "Mito/Chrom" = 1.8,
+      "Lysosome" = 1.8,
+      "Peroxisome" = 1.8,
+      "Proteasome" = 1.8,
+      "Ribosome" = 1.8)) +
+
+    scale_color_manual(values = alloc_colors) +
+    theme_minimal() +
+    labs(title = paste("PCA T -", hr))
+
+  pca_plots[[hr]] <- p}
+
+dev.off()
+
+
