@@ -1,0 +1,94 @@
+library(dplyr)
+library(tidyr)
+library(readr)
+library(tibble)
+library(ggvenn)
+library(UniProt.ws)
+
+FAM134C <- read_tsv(file.path("../", "FAM134C_interactors.txt"))
+TEX264 <- read_tsv(file.path("../", "TEX264_interactors.txt"))
+CCPG1 <- read_tsv(file.path("../", "CCPG1_interactors.txt"))
+pulldown <- readRDS(file.path("../", "Thaps24hr_triplicate_pulldown.rds"))
+
+
+# Prepare lists
+# Filter for human proteins
+FAM134C <- FAM134C %>% filter(`Organism Name Interactor A` == "Homo sapiens" & `Organism Name Interactor B` == "Homo sapiens")
+TEX264 <- TEX264 %>% filter(`Organism Name Interactor A` == "Homo sapiens" & `Organism Name Interactor B` == "Homo sapiens")
+CCPG1 <- CCPG1 %>% filter(`Organism Name Interactor A` == "Homo sapiens" & `Organism Name Interactor B` == "Homo sapiens")
+
+# Get list of interactors
+FAM134C_list <- ifelse(
+  FAM134C$`SWISS-PROT Accessions Interactor A` == "Q86VR2",
+  FAM134C$`SWISS-PROT Accessions Interactor B`,
+  FAM134C$`SWISS-PROT Accessions Interactor A`)
+
+TEX264_list <- ifelse(
+  TEX264$`SWISS-PROT Accessions Interactor A` == "Q9Y6I9",
+  TEX264$`SWISS-PROT Accessions Interactor B`,
+  TEX264$`SWISS-PROT Accessions Interactor A`)
+
+CCPG1_list <- ifelse(
+  CCPG1$`SWISS-PROT Accessions Interactor A` == "Q9ULG6",
+  CCPG1$`SWISS-PROT Accessions Interactor B`,
+  CCPG1$`SWISS-PROT Accessions Interactor A`)
+
+# Adjust format
+FAM134C_list <- unlist(strsplit(FAM134C_list, "\\|"))
+TEX264_list <- unlist(strsplit(TEX264_list, "\\|"))
+CCPG1_list <- unlist(strsplit(CCPG1_list, "\\|"))
+
+FAM134C_list <- FAM134C_list[FAM134C_list != "-"]
+TEX264_list <- TEX264_list[TEX264_list != "-"]
+CCPG1_list <- CCPG1_list[CCPG1_list != "-"]
+
+
+venn_list1 <- list(
+  FAM134C  = FAM134C_list,
+  pulldown = pulldown)
+
+v1 <- ggvenn(venn_list1)
+
+  ggsave(plot = v1,
+         filename = paste0("../figs/10_FAMC_thapsPD.pdf"),
+         width = 5, height = 5, useDingbats = FALSE)
+
+venn_list2 <- list(
+  TEX264 = TEX264_list,
+  pulldown = pulldown)
+
+v2 <- ggvenn(venn_list2)
+
+  ggsave(plot = v2,
+         filename = paste0("../figs/10_TEX264_thapsPD.pdf"),
+         width = 5, height = 5, useDingbats = FALSE)
+
+venn_list3 <- list(
+  CCPG1 =CCPG1_list,
+  pulldown = pulldown)
+
+v3 <- ggvenn(venn_list3)
+
+  ggsave(plot = v3,
+         filename = paste0("../figs/10_CCPG1_thapsPDs.pdf"),
+         width = 5, height = 5, useDingbats = FALSE)
+
+# Find overlaps
+overlap1 <- intersect(FAM134C_list, pulldown)
+overlap2 <- intersect(TEX264_list, pulldown)
+overlap3 <- intersect(CCPG1_list, pulldown)
+# Print the overlapping elements
+all_overlaps <- c(overlap1, overlap2, overlap3)
+
+# Connect to human database
+up <- UniProt.ws(taxId = 9606)
+
+# Retrieve molecular weight
+res <- select(
+  up,
+  keys = all_overlaps,
+  columns = c("gene_names"),
+  keytype = "UniProtKB")
+
+
+
