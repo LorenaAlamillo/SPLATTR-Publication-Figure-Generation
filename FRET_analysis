@@ -1,0 +1,119 @@
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(ggpubr)
+library(ggbeeswarm)
+library(stringr)
+
+datap5 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/ZEISS/Processed", "0p5_FRETnormalized_objecttrueCFP_YFP_overlap.csv"))
+data1 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/ZEISS/Processed", "1_FRETnormalized_objecttrueCFP_YFP_overlap.csv"))
+data2 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/ZEISS/Processed", "2_FRETnormalized_objecttrueCFP_YFP_overlap.csv"))
+data4 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/ZEISS/Processed", "4_FRETnormalized_objecttrueCFP_YFP_overlap.csv"))
+data16 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/ZEISS/Processed", "16_FRETnormalized_objecttrueCFP_YFP_overlap.csv"))
+data24 <- read_csv(file.path("/Volumes/Omics-Shared/Lorena/Immunoflourescence/ZEISS/Processed", "24_FRETnormalized_objecttrueCFP_YFP_overlap.csv"))
+
+# Format
+process_fret <- function(df, timepoint) {
+  df %>%
+    dplyr::select(FileName_CFP, Math_normFRET) %>%
+    mutate(
+      Treatment = substr(FileName_CFP, 1, 1),
+      Time = timepoint,
+      Well = as.numeric(str_extract(FileName_CFP, "\\d+(?=_)")),
+      Cell = as.numeric(str_extract(FileName_CFP, "(?<=c)\\d+(?=\\.czi$)")),
+      Cell_ID = paste0("W", Well, "_C", Cell)) %>% 
+    dplyr::select(Treatment, Time, Well, Cell, Cell_ID, Math_normFRET)}
+
+FRET_all <- bind_rows(
+  process_fret(datap5, 0.5),
+  process_fret(data1, 1),
+  process_fret(data2, 2),
+  process_fret(data4, 4),
+  process_fret(data16, 16),
+  process_fret(data24, 24))
+
+# Calculate percent positive regions per cell
+cell_positive <- FRET_all %>%
+  group_by(Treatment, Time, Cell_ID) %>%
+  summarise(
+    n_positive = sum(Math_normFRET > 0, na.rm = TRUE),
+    n_regions = sum(!is.na(Math_normFRET)),
+    percent_positive = 100 * n_positive / n_regions,
+    .groups = "drop")
+
+# Calculate D mean at each timepoint
+D_mean <- cell_positive %>%
+  filter(Treatment == "D") %>%
+  group_by(Time) %>%
+  summarise(
+    D_mean = mean(percent_positive, na.rm = TRUE),
+    .groups = "drop")
+T_mean <- cell_positive %>%
+  filter(Treatment == "T") %>%
+  group_by(Time) %>%
+  summarise(
+    T_mean = mean(percent_positive, na.rm = TRUE),
+    .groups = "drop")
+
+# Normalize each cell to the D mean at that timepoint
+cell_positive_norm <- cell_positive %>%
+  left_join(D_mean, by = "Time") %>%
+  left_join(T_mean, by = "Time") %>%
+  mutate(
+    diff_from_D = percent_positive - D_mean,
+    diff_from_T = percent_positive - T_mean) %>%
+  group_by(Time) %>%
+  mutate(
+    mean_diff_from_D = T_mean - D_mean,
+    standard_se = sqrt(
+      sd(percent_positive[Treatment == "D"], na.rm = TRUE)^2 /
+        sum(!is.na(percent_positive[Treatment == "D"])) +
+      sd(percent_positive[Treatment == "T"], na.rm = TRUE)^2 /
+        sum(!is.na(percent_positive[Treatment == "T"])))) %>%
+  ungroup()
+
+p <- ggplot(
+  subset(cell_positive_norm, Treatment == "T"),
+  aes(
+    x = factor(Time),
+    y = mean_diff_from_D,
+    color = Treatment,
+    group = Treatment)) +
+  geom_line(
+    linewidth = 1) +
+  geom_point(
+    size = 3) +
+  geom_errorbar(
+    aes(
+      ymin = mean_diff_from_D - standard_se,
+      ymax = mean_diff_from_D + standard_se),
+    width = 0.15) +
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed") +
+  stat_compare_means(
+    data = cell_positive_norm,
+    aes(
+      x = factor(Time),
+      y = diff_from_D,
+      group = Treatment),
+    method = "wilcox.test",
+    label = "p.format",
+    label.y = 20,
+    hide.ns = TRUE) +
+  scale_color_manual(
+    values = c("T" = "red3")) +
+  coord_cartesian(
+    ylim = c(-25, 25)) +
+  theme_classic() +
+  labs(
+    x = "Time",
+    y = "Difference from D mean (% positive regions)",
+    color = "Treatment")
+
+ggsave(
+  "FRET_positive_difference_SE.pdf",
+  plot = p,
+  width = 7,
+  height = 5,
+  units = "in")
